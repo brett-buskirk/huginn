@@ -9,10 +9,16 @@
 #   huginn help
 set -uo pipefail
 SELF="$(readlink -f "$0" 2>/dev/null || echo "$0")"; HERE="$(cd "$(dirname "$SELF")" && pwd)"
-ROOT="${HUGINN_ROOT:-$HOME/github-repos}"   # the estate this tool manages (override with HUGINN_ROOT)
-OWNER="brett-buskirk"
-BIZ_EMAIL="brett@brett-buskirk.dev"
-FAMILY="agent-gate agentgate-testbed"   # managed by their own agent — excluded from sync/doctor
+# ── configuration — env  >  config file  >  smart defaults ────────────────
+CONFIG="${HUGINN_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/huginn/config}"
+for _v in OWNER EMAIL NAME ROOT FAMILY CONVENTIONS; do eval "_env_$_v=\${HUGINN_$_v-}"; done
+[ -f "$CONFIG" ] && . "$CONFIG"
+ROOT="${_env_ROOT:-${HUGINN_ROOT:-$HOME/github-repos}}"
+OWNER="${_env_OWNER:-${HUGINN_OWNER:-}}"                       # resolved lazily — see need_owner
+BIZ_EMAIL="${_env_EMAIL:-${HUGINN_EMAIL:-$(git config user.email 2>/dev/null)}}"
+BIZ_NAME="${_env_NAME:-${HUGINN_NAME:-$(git config user.name 2>/dev/null)}}"
+FAMILY="${_env_FAMILY:-${HUGINN_FAMILY:-}}"                    # space-separated repos to exclude
+CONV="$ROOT/${_env_CONVENTIONS:-${HUGINN_CONVENTIONS:-repo-conventions}}"
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; C=$'\e[36m'; M=$'\e[35m'; DIM=$'\e[2m'; BD=$'\e[1m'; X=$'\e[0m'
@@ -21,6 +27,7 @@ else R=; G=; Y=; C=; M=; DIM=; BD=; X=; fi
 is_family(){ case " $FAMILY " in *" $1 "*) return 0;; *) return 1;; esac; }
 is_help(){ case "${1:-}" in help|-h|--help) return 0;; *) return 1;; esac; }
 repos(){ (cd "$ROOT" && for d in */; do [ -d "${d}.git" ] && echo "${d%/}"; done | sort); }
+need_owner(){ [ -n "$OWNER" ] && return 0; OWNER="$(gh api user --jq .login 2>/dev/null)"; [ -n "$OWNER" ] && return 0; printf "  ${R}no GitHub owner set.${X} Set HUGINN_OWNER, add it to %s, or run ${BD}huginn init${X}.\n" "$CONFIG" >&2; return 1; }
 
 # ── status ────────────────────────────────────────────────────────────────
 cmd_status(){ is_help "${1:-}" && { help_status; return 0; }; HUGINN_ROOT="$ROOT" exec "$HERE/repo-status.sh" "$@"; }
@@ -45,6 +52,7 @@ cmd_sync(){
 # ── doctor ────────────────────────────────────────────────────────────────
 cmd_doctor(){
   is_help "${1:-}" && { help_doctor; return 0; }
+  need_owner || return 1
   local FIX=0 target="" verbose=0
   for a in "$@"; do case "$a" in
     --fix) FIX=1;; -v|--verbose) verbose=1;; -*) ;; *) target="$a";; esac; done
@@ -63,7 +71,7 @@ cmd_doctor(){
     local email; email=$(git -C "$GD" config --local user.email 2>/dev/null)
     if [ "$email" != "$BIZ_EMAIL" ]; then
       if [ "$FIX" = 1 ]; then
-        git -C "$GD" config user.email "$BIZ_EMAIL"; git -C "$GD" config user.name "Brett Buskirk"
+        git -C "$GD" config user.email "$BIZ_EMAIL"; git -C "$GD" config user.name "$BIZ_NAME"
         issues+=("${G}✚email${X}"); fixed=$((fixed+1))
       else issues+=("${Y}local-email${X}"); fi
     fi
@@ -75,9 +83,9 @@ cmd_doctor(){
       # managed repo — full standard
       local rtypes=""; [ -n "$rid" ] && rtypes=$(gh api "repos/$OWNER/$d/rulesets/$rid" --jq '[.rules[].type]|join(" ")' 2>/dev/null)
       if [ -z "$rid" ] || [[ "$rtypes" != *required_status_checks* ]] || [[ "$rtypes" != *required_signatures* ]]; then
-        if [ "$FIX" = 1 ]; then
-          if [ -n "$rid" ]; then gh api -X PUT "repos/$OWNER/$d/rulesets/$rid" --input "$ROOT/repo-conventions/ruleset.json" >/dev/null 2>&1
-          else gh api -X POST "repos/$OWNER/$d/rulesets" --input "$ROOT/repo-conventions/ruleset.json" >/dev/null 2>&1; fi
+        if [ "$FIX" = 1 ] && [ -f "$CONV/ruleset.json" ]; then
+          if [ -n "$rid" ]; then gh api -X PUT "repos/$OWNER/$d/rulesets/$rid" --input "$CONV/ruleset.json" >/dev/null 2>&1
+          else gh api -X POST "repos/$OWNER/$d/rulesets" --input "$CONV/ruleset.json" >/dev/null 2>&1; fi
           issues+=("${G}✚ruleset${X}"); fixed=$((fixed+1))
         else
           [[ "$rtypes" != *required_status_checks* ]] && issues+=("${Y}gate-not-required${X}")
@@ -105,12 +113,12 @@ cmd_doctor(){
 }
 
 # ── apply ─────────────────────────────────────────────────────────────────
-cmd_apply(){ is_help "${1:-}" && { help_apply; return 0; }; exec "$ROOT/repo-conventions/apply-conventions.sh" "$@"; }
+cmd_apply(){ is_help "${1:-}" && { help_apply; return 0; }; [ -x "$CONV/apply-conventions.sh" ] || { printf "  ${R}no conventions found at %s${X} ${DIM}(set HUGINN_CONVENTIONS or run huginn init)${X}\n" "$CONV"; return 1; }; exec "$CONV/apply-conventions.sh" "$@"; }
 
 # ── conventions (look up the standard) ────────────────────────────────────
 cmd_conventions(){
   is_help "${1:-}" && { help_conventions; return 0; }
-  local RC="$ROOT/repo-conventions"
+  local RC="$CONV"
   [ -d "$RC" ] || { printf "\n  ${R}repo-conventions not found at %s${X}\n\n" "$RC"; return 1; }
   case "${1:-overview}" in
     labels)
@@ -157,6 +165,7 @@ cmd_conventions(){
 # ── prs (open PRs across the estate) ──────────────────────────────────────
 cmd_prs(){
   is_help "${1:-}" && { help_prs; return 0; }
+  need_owner || return 1
   printf "\n  ${BD}open PRs across the estate${X}  ${DIM}· %s${X}\n\n" "$(date '+%H:%M')"
   local rows; rows=$(gh search prs --owner "$OWNER" --state open --limit 100 \
     --json repository,number,title,author --jq '.[] | [.repository.name,(.number|tostring),.title,.author.login] | @tsv' 2>/dev/null)
@@ -172,6 +181,7 @@ cmd_prs(){
 # ── new (scaffold a repo to standard) ─────────────────────────────────────
 cmd_new(){
   is_help "${1:-}" && { help_new; return 0; }
+  need_owner || return 1
   local name="" vis="--private" desc="" scope="" dry=0
   while [ $# -gt 0 ]; do case "$1" in
     --public) vis="--public";; --private) vis="--private";;
@@ -180,46 +190,49 @@ cmd_new(){
     *) name="$1";;
   esac; shift; done
   [ -z "$name" ] && { printf "  ${R}usage:${X} huginn new <name> [--public] [--desc \"…\"] [--scope web|k8s|infra] [--dry-run]\n"; return 1; }
-  local DIR="$ROOT/$name" RC="$ROOT/repo-conventions"
+  local DIR="$ROOT/$name" RC="$CONV" have_conv=0
+  [ -d "$RC" ] && have_conv=1
   [ -e "$DIR" ] && { printf "  ${R}✗ %s already exists locally${X}\n" "$DIR"; return 1; }
   gh repo view "$OWNER/$name" >/dev/null 2>&1 && { printf "  ${R}✗ %s/%s already exists on GitHub${X}\n" "$OWNER" "$name"; return 1; }
 
-  printf "\n  ${BD}huginn new${X} ${DIM}· scaffold '%s' to standard${X}\n\n" "$name"
+  printf "\n  ${BD}huginn new${X} ${DIM}· scaffold '%s'${X}\n\n" "$name"
+  printf "    owner       %s\n" "$OWNER"
   printf "    visibility  %s\n" "${vis#--}"
-  printf "    files       .agentgate.yml · workflow · CONTRIBUTING.md · README.md · LICENSE · .gitignore\n"
-  printf "    guardrails  ruleset (PR + agentgate + signatures) · base labels%s\n" "$([ -n "$scope" ] && echo " + $scope scope")"
+  if [ "$have_conv" = 1 ]; then printf "    guardrails  .agentgate.yml · workflow · ruleset · labels%s ${DIM}(from %s)${X}\n" "$([ -n "$scope" ] && echo " + $scope")" "${CONV##*/}"
+  else printf "    ${Y}guardrails  none — no conventions at %s (bare repo)${X}\n" "$CONV"; fi
   [ -n "$desc" ] && printf "    description %s\n" "$desc"
   if [ "$dry" = 1 ]; then printf "\n  ${DIM}[dry-run] nothing created — drop --dry-run to build it.${X}\n\n"; return 0; fi
 
   printf "\n"
   mkdir -p "$DIR/.github/workflows"
-  cp "$RC/.agentgate.yml" "$DIR/.agentgate.yml"
-  cp "$RC/.github/workflows/agentgate.yml" "$DIR/.github/workflows/agentgate.yml"
-  printf '.DS_Store\n*.log\n.env\n' > "$DIR/.gitignore"
-  printf 'MIT License\n\nCopyright (c) 2026 Brett Buskirk\n' > "$DIR/LICENSE"
+  if [ "$have_conv" = 1 ]; then
+    cp "$RC/.agentgate.yml" "$DIR/.agentgate.yml" 2>/dev/null
+    cp "$RC/.github/workflows/agentgate.yml" "$DIR/.github/workflows/agentgate.yml" 2>/dev/null
+  fi
+  printf '.DS_Store\n*.log\n' > "$DIR/.gitignore"
+  printf 'MIT License\n\nCopyright (c) %s %s\n' "$(date +%Y)" "$BIZ_NAME" > "$DIR/LICENSE"
   cat > "$DIR/CONTRIBUTING.md" <<'CONTRIB'
 # Contributing
 
-- **No direct commits to `main`** — branch → PR (`gh pr create`) → green checks → merge.
-- **AgentGate runs on every PR** — `secrets` + `dangerous_patterns` block; `scope` is advisory.
-- Commits are signed & Verified; never commit secrets (`.env`, keys are gitignored).
+- **No direct commits to `main`** — branch → PR → green checks → merge.
+- **AgentGate runs on every PR** (if configured) — `secrets` + `dangerous_patterns` block.
+- Never commit secrets (`.env`, keys are gitignored).
 CONTRIB
   printf '# %s\n\n%s\n' "$name" "${desc:-_TODO: describe this project._}" > "$DIR/README.md"
 
   git -C "$DIR" init -q
-  git -C "$DIR" config user.email "$BIZ_EMAIL"; git -C "$DIR" config user.name "Brett Buskirk"
+  git -C "$DIR" config user.email "$BIZ_EMAIL"; git -C "$DIR" config user.name "$BIZ_NAME"
   git -C "$DIR" add .
-  git -C "$DIR" commit -q -m "chore: initial scaffold with guardrails
-
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>" && printf "  ${G}✓${X} genesis commit ${DIM}(signed)${X}\n"
+  git -C "$DIR" commit -q -m "chore: initial scaffold" && printf "  ${G}✓${X} genesis commit\n"
   if ( cd "$DIR" && gh repo create "$OWNER/$name" $vis --source=. --remote=origin --push ) >/dev/null 2>&1; then
     printf "  ${G}✓${X} created + pushed %s/%s ${DIM}(%s)${X}\n" "$OWNER" "$name" "${vis#--}"
   else printf "  ${R}✗ gh repo create failed${X}\n"; return 1; fi
   [ -n "$desc" ] && gh repo edit "$OWNER/$name" --description "$desc" >/dev/null 2>&1
-  gh api -X POST "repos/$OWNER/$name/rulesets" --input "$RC/ruleset.json" >/dev/null 2>&1 && printf "  ${G}✓${X} ruleset applied\n" || printf "  ${Y}∙${X} ruleset step skipped\n"
-  bash "$RC/apply-conventions.sh" "$OWNER/$name" "$scope" >/dev/null 2>&1 && printf "  ${G}✓${X} labels applied%s\n" "$([ -n "$scope" ] && echo " (base + $scope)")"
-  printf "\n  ${BD}%s${X} is live → ${C}https://github.com/%s/%s${X}\n" "$name" "$OWNER" "$name"
-  printf "  ${DIM}next: add a CLAUDE.md brief, milestones, and a project board (repo-conventions §6–7)${X}\n\n"
+  if [ "$have_conv" = 1 ]; then
+    [ -f "$RC/ruleset.json" ] && gh api -X POST "repos/$OWNER/$name/rulesets" --input "$RC/ruleset.json" >/dev/null 2>&1 && printf "  ${G}✓${X} ruleset applied\n"
+    [ -x "$RC/apply-conventions.sh" ] && bash "$RC/apply-conventions.sh" "$OWNER/$name" "$scope" >/dev/null 2>&1 && printf "  ${G}✓${X} labels applied\n"
+  fi
+  printf "\n  ${BD}%s${X} → ${C}https://github.com/%s/%s${X}\n\n" "$name" "$OWNER" "$name"
 }
 
 # ── open (jump to a repo on GitHub) ───────────────────────────────────────
@@ -231,6 +244,7 @@ open_url(){
 }
 cmd_open(){
   is_help "${1:-}" && { help_open; return 0; }
+  need_owner || return 1
   local repo="${1:-}" page="${2:-}" base url
   [ -z "$repo" ] && { printf "  ${R}usage:${X} huginn open <repo> [pr|settings|rules|security|actions|issues]\n"; return 1; }
   base="https://github.com/$OWNER/$repo"
@@ -276,6 +290,36 @@ cmd_branches(){
   [ "$total" -eq 0 ] && printf "  ${G}✓ no stray local branches anywhere${X}\n"
   if [ "$PRUNE" = 1 ]; then printf "\n  ${BD}%d merged branches deleted${X}\n\n" "$pruned"
   else printf "\n  ${DIM}%d repos have extra local branches · 'huginn branches --prune' deletes the merged ones${X}\n\n" "$total"; fi
+}
+
+# ── init (write a config file) ────────────────────────────────────────────
+cmd_init(){
+  is_help "${1:-}" && { help_init; return 0; }
+  local force=0; [ "${1:-}" = "--force" ] && force=1
+  mkdir -p "$(dirname "$CONFIG")"
+  if [ -f "$CONFIG" ] && [ "$force" = 0 ]; then
+    printf "\n  config already exists → ${C}%s${X}\n  ${DIM}edit it directly, or 'huginn init --force' to overwrite.${X}\n\n" "$CONFIG"; return 0
+  fi
+  local o e n; o="$(gh api user --jq .login 2>/dev/null)"; e="$(git config user.email 2>/dev/null)"; n="$(git config user.name 2>/dev/null)"
+  cat > "$CONFIG" <<CFG
+# huginn configuration — https://github.com/brett-buskirk/huginn
+HUGINN_OWNER="$o"
+HUGINN_EMAIL="$e"
+HUGINN_NAME="$n"
+HUGINN_ROOT="\$HOME/github-repos"
+HUGINN_FAMILY=""                       # space-separated repos to exclude from sync/doctor
+HUGINN_CONVENTIONS="repo-conventions"  # dir under HUGINN_ROOT with labels.json/ruleset.json
+CFG
+  printf "\n  ${G}✓${X} wrote ${C}%s${X}\n\n" "$CONFIG"
+  sed 's/^/    /' "$CONFIG"
+  printf "\n  ${DIM}edit as needed — env vars (HUGINN_*) override the file.${X}\n\n"
+}
+help_init(){
+  printf "\n  ${BD}huginn init${X} [--force]\n\n"
+  printf "  Write a config file (${DIM}%s${X}) with detected defaults —\n" "$CONFIG"
+  printf "  your GitHub login, git email/name, and estate paths. Edit it afterward.\n\n"
+  printf "  ${BD}Config keys${X} ${DIM}(an env HUGINN_* var overrides the file)${X}\n"
+  printf "    HUGINN_OWNER · HUGINN_EMAIL · HUGINN_NAME · HUGINN_ROOT · HUGINN_FAMILY · HUGINN_CONVENTIONS\n\n"
 }
 
 # ── per-command help ──────────────────────────────────────────────────────
@@ -383,6 +427,7 @@ cmd_help(){
   printf "\n  ${BD}huginn${X} ${DIM}— estate CLI · %s${X}\n\n" "$ROOT"
   printf "  ${DIM}create${X}\n"
   printf "    ${BD}new${X} <name> [opts]      scaffold a new repo to the full standard\n"
+  printf "    ${BD}init${X} [--force]         write a huginn config with detected defaults\n"
   printf "  ${DIM}inspect${X}\n"
   printf "    ${BD}status${X} [--fetch]       at-a-glance dashboard (branch · dirty · ahead/behind · flags)\n"
   printf "    ${BD}prs${X}                    open PRs across the estate\n"
@@ -406,6 +451,7 @@ case "${1:-help}" in
   conventions|conv|std) shift; cmd_conventions "$@";;
   prs)    shift; cmd_prs "$@";;
   new)    shift; cmd_new "$@";;
+  init)   shift; cmd_init "$@";;
   open)   shift; cmd_open "$@";;
   branches|br) shift; cmd_branches "$@";;
   help|-h|--help) cmd_help;;
