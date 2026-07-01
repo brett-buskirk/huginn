@@ -6,6 +6,16 @@ All notable changes to huginn are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **Config-driven** — settings resolve env → config file → smart defaults: `HUGINN_OWNER`
+  (auto-detects from your `gh` login), `HUGINN_EMAIL`/`HUGINN_NAME` (from git config), `HUGINN_ROOT`,
+  `HUGINN_FAMILY`, `HUGINN_CONVENTIONS`. Config lives at `~/.config/huginn/config`.
+- **`init`** — writes a config file with detected defaults.
+
+### Changed
+- Removed the hardcoded owner/email/name/conventions path. Commands that need the conventions repo
+  now degrade gracefully when it's absent (a step toward the tool being reusable by others).
+
 ## [0.1.0] - 2026-07-01
 
 First cut — extracted from a loose script into a real repo.

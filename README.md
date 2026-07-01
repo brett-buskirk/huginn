@@ -6,9 +6,10 @@ Named for Odin's raven that flies the realms and reports back what it sees.
 `huginn` gives you an at-a-glance dashboard of every repo, audits them against a shared convention,
 scaffolds new repos to that standard, and handles the routine chores (sync, labels, open PRs).
 
-> **Note:** this is built for my own workflow. It expects a sibling `repo-conventions/` repo (the
-> standard it audits and applies against) and is currently wired to a single GitHub owner. Making it
-> config-driven and reusable by others is on the [Roadmap](ROADMAP.md).
+> **Note:** built for my own workflow, but **config-driven** — `huginn init` detects sensible
+> defaults (your `gh` login, git identity, `~/github-repos`). It works best alongside a
+> `repo-conventions` repo (the standard it audits and applies against) and degrades gracefully
+> without one. See the [Roadmap](ROADMAP.md) for what's left before it's truly turnkey.
 
 ## Install
 
@@ -17,6 +18,7 @@ Requirements: `bash`, `git`, [`gh`](https://cli.github.com) (authenticated), `jq
 ```bash
 git clone git@github.com:brett-buskirk/huginn.git ~/github-repos/huginn
 ln -s ~/github-repos/huginn/huginn ~/.local/bin/huginn   # ~/.local/bin must be on your PATH
+huginn init                                              # write a config with detected defaults
 ```
 
 `huginn` manages the repos in **`$HUGINN_ROOT`** (default `~/github-repos`).
@@ -52,9 +54,21 @@ Run **`huginn <command> help`** for details and options on any command.
 
 ## Configuration
 
-| Variable | Default | Purpose |
+Settings resolve **environment variable → config file → smart default**. Run `huginn init` to write
+a config with detected defaults, then edit it. Config file:
+`${XDG_CONFIG_HOME:-~/.config}/huginn/config` (override with `HUGINN_CONFIG`).
+
+| Key / env var | Default | Purpose |
 |---|---|---|
-| `HUGINN_ROOT` | `~/github-repos` | the directory of repos to manage |
+| `HUGINN_OWNER` | your `gh` login | GitHub owner of the estate repos |
+| `HUGINN_ROOT` | `~/github-repos` | directory of repos to manage |
+| `HUGINN_EMAIL` | your git email | commit email for `new` / `doctor --fix` |
+| `HUGINN_NAME` | your git name | committer name |
+| `HUGINN_FAMILY` | _(none)_ | space-separated repos to exclude from `sync`/`doctor` |
+| `HUGINN_CONVENTIONS` | `repo-conventions` | dir under `HUGINN_ROOT` with `labels.json`/`ruleset.json` |
+
+Commands that need the conventions repo (`apply`, `conventions`, parts of `doctor`/`new`) degrade
+gracefully when it's absent.
 
 ## License
 
