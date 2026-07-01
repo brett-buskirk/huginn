@@ -1,0 +1,413 @@
+#!/usr/bin/env bash
+# huginn — estate-management CLI. Manages the repos in $HUGINN_ROOT (default ~/github-repos).
+# Odin's raven: flies the realms, reports back. Working name — alias/rename freely.
+#
+#   huginn status [--fetch]        at-a-glance dashboard of every repo
+#   huginn sync                    pull each repo to its default branch (ff-only)
+#   huginn doctor [repo] [--fix]   audit repos against repo-conventions; --fix the safe stuff
+#   huginn apply <repo> <scope>    apply the label taxonomy (delegates to apply-conventions.sh)
+#   huginn help
+set -uo pipefail
+SELF="$(readlink -f "$0" 2>/dev/null || echo "$0")"; HERE="$(cd "$(dirname "$SELF")" && pwd)"
+ROOT="${HUGINN_ROOT:-$HOME/github-repos}"   # the estate this tool manages (override with HUGINN_ROOT)
+OWNER="brett-buskirk"
+BIZ_EMAIL="brett@brett-buskirk.dev"
+FAMILY="agent-gate agentgate-testbed"   # managed by their own agent — excluded from sync/doctor
+
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; C=$'\e[36m'; M=$'\e[35m'; DIM=$'\e[2m'; BD=$'\e[1m'; X=$'\e[0m'
+else R=; G=; Y=; C=; M=; DIM=; BD=; X=; fi
+
+is_family(){ case " $FAMILY " in *" $1 "*) return 0;; *) return 1;; esac; }
+is_help(){ case "${1:-}" in help|-h|--help) return 0;; *) return 1;; esac; }
+repos(){ (cd "$ROOT" && for d in */; do [ -d "${d}.git" ] && echo "${d%/}"; done | sort); }
+
+# ── status ────────────────────────────────────────────────────────────────
+cmd_status(){ is_help "${1:-}" && { help_status; return 0; }; HUGINN_ROOT="$ROOT" exec "$HERE/repo-status.sh" "$@"; }
+
+# ── sync ──────────────────────────────────────────────────────────────────
+cmd_sync(){
+  is_help "${1:-}" && { help_sync; return 0; }
+  local ok=0 skip=0 prob=0 def
+  printf "\n  ${BD}huginn sync${X}  ${DIM}· pull each repo to its default branch${X}\n\n"
+  while read -r d; do
+    if is_family "$d"; then printf "  ${DIM}∙ %s (external)${X}\n" "$d"; skip=$((skip+1)); continue; fi
+    local GD="$ROOT/$d"
+    if [ -n "$(git -C "$GD" status --porcelain 2>/dev/null)" ]; then printf "  ${Y}∙ %s (dirty — skipped)${X}\n" "$d"; skip=$((skip+1)); continue; fi
+    def=$(git -C "$GD" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##'); def=${def:-main}
+    git -C "$GD" checkout -q "$def" 2>/dev/null
+    if git -C "$GD" pull -q --ff-only origin "$def" 2>/dev/null; then printf "  ${G}✓${X} %-32s ${DIM}(%s)${X}\n" "$d" "$def"; ok=$((ok+1))
+    else printf "  ${R}✗ %s (couldn't fast-forward)${X}\n" "$d"; prob=$((prob+1)); fi
+  done < <(repos)
+  printf "\n  ${BD}%d updated${X} ${DIM}·${X} ${Y}%d skipped${X} ${DIM}·${X} ${R}%d problems${X}\n\n" "$ok" "$skip" "$prob"
+}
+
+# ── doctor ────────────────────────────────────────────────────────────────
+cmd_doctor(){
+  is_help "${1:-}" && { help_doctor; return 0; }
+  local FIX=0 target="" verbose=0
+  for a in "$@"; do case "$a" in
+    --fix) FIX=1;; -v|--verbose) verbose=1;; -*) ;; *) target="$a";; esac; done
+
+  printf "\n  ${BD}huginn doctor${X}  ${DIM}· audit vs repo-conventions%s · %s${X}\n" \
+    "$([ "$FIX" = 1 ] && echo ' · FIX mode')" "$(date '+%H:%M')"
+  printf "  ${DIM}(network — checks rulesets + security settings per repo)${X}\n\n"
+
+  local ok=0 gap=0 dormant=0 fixed=0
+  while read -r d; do
+    [ -n "$target" ] && [ "$d" != "$target" ] && continue
+    is_family "$d" && continue
+    local GD="$ROOT/$d"; local -a issues=()
+
+    # baseline: business email
+    local email; email=$(git -C "$GD" config --local user.email 2>/dev/null)
+    if [ "$email" != "$BIZ_EMAIL" ]; then
+      if [ "$FIX" = 1 ]; then
+        git -C "$GD" config user.email "$BIZ_EMAIL"; git -C "$GD" config user.name "Brett Buskirk"
+        issues+=("${G}✚email${X}"); fixed=$((fixed+1))
+      else issues+=("${Y}local-email${X}"); fi
+    fi
+    # baseline: ruleset present
+    local rid; rid=$(gh api "repos/$OWNER/$d/rulesets" --jq '.[]|select(.name=="require-pr-to-default")|.id' 2>/dev/null | head -1)
+    [ -z "$rid" ] && issues+=("${R}no-ruleset${X}")
+
+    if [ -f "$GD/.github/workflows/agentgate.yml" ]; then
+      # managed repo — full standard
+      local rtypes=""; [ -n "$rid" ] && rtypes=$(gh api "repos/$OWNER/$d/rulesets/$rid" --jq '[.rules[].type]|join(" ")' 2>/dev/null)
+      if [ -z "$rid" ] || [[ "$rtypes" != *required_status_checks* ]] || [[ "$rtypes" != *required_signatures* ]]; then
+        if [ "$FIX" = 1 ]; then
+          if [ -n "$rid" ]; then gh api -X PUT "repos/$OWNER/$d/rulesets/$rid" --input "$ROOT/repo-conventions/ruleset.json" >/dev/null 2>&1
+          else gh api -X POST "repos/$OWNER/$d/rulesets" --input "$ROOT/repo-conventions/ruleset.json" >/dev/null 2>&1; fi
+          issues+=("${G}✚ruleset${X}"); fixed=$((fixed+1))
+        else
+          [[ "$rtypes" != *required_status_checks* ]] && issues+=("${Y}gate-not-required${X}")
+          [[ "$rtypes" != *required_signatures* ]]    && issues+=("${Y}sign-not-required${X}")
+        fi
+      fi
+      [ -f "$GD/.agentgate.yml" ] || issues+=("${Y}no-.agentgate.yml${X}")
+      local vis="" ss=""
+      read -r vis ss < <(gh api "repos/$OWNER/$d" --jq '"\(.visibility) \(.security_and_analysis.secret_scanning.status // "na")"' 2>/dev/null || echo "? ?")
+      [ "$vis" = public ] && [ "$ss" != enabled ] && issues+=("${Y}secret-scan-off${X}")
+
+      if [ ${#issues[@]} -eq 0 ]; then ok=$((ok+1)); [ "$verbose" = 1 ] && printf "  ${G}✓${X} %s\n" "$d"
+      else gap=$((gap+1)); printf "  ${Y}▲${X} ${BD}%-32s${X} %s\n" "$d" "${issues[*]}"; fi
+    else
+      # dormant / unwired — baseline only
+      dormant=$((dormant+1))
+      [ ${#issues[@]} -gt 0 ] && printf "  ${DIM}∙ %-32s %s (dormant)${X}\n" "$d" "${issues[*]}"
+    fi
+  done < <(repos)
+
+  printf "\n  ${G}%d managed & compliant${X} ${DIM}·${X} ${Y}%d with gaps${X} ${DIM}·${X} ${DIM}%d dormant${X}" "$ok" "$gap" "$dormant"
+  [ "$FIX" = 1 ] && printf " ${DIM}·${X} ${G}%d fixed${X}" "$fixed"
+  [ "$FIX" = 0 ] && [ "$gap" -gt 0 ] && printf "\n  ${DIM}run 'huginn doctor --fix' to auto-fix local-email gaps; settings gaps → see repo-conventions${X}"
+  printf "\n\n"
+}
+
+# ── apply ─────────────────────────────────────────────────────────────────
+cmd_apply(){ is_help "${1:-}" && { help_apply; return 0; }; exec "$ROOT/repo-conventions/apply-conventions.sh" "$@"; }
+
+# ── conventions (look up the standard) ────────────────────────────────────
+cmd_conventions(){
+  is_help "${1:-}" && { help_conventions; return 0; }
+  local RC="$ROOT/repo-conventions"
+  [ -d "$RC" ] || { printf "\n  ${R}repo-conventions not found at %s${X}\n\n" "$RC"; return 1; }
+  case "${1:-overview}" in
+    labels)
+      printf "\n  ${BD}Label taxonomy${X}  ${DIM}· repo-conventions/labels.json${X}\n"
+      local groups; if [ -n "${2:-}" ]; then groups="$2"; else groups=$(jq -r 'keys[]' "$RC/labels.json"); fi
+      for g in $groups; do
+        jq -e --arg g "$g" 'has($g)' "$RC/labels.json" >/dev/null 2>&1 || { printf "\n  ${Y}no such group: %s  (have: %s)${X}\n" "$g" "$(jq -r 'keys|join(", ")' "$RC/labels.json")"; continue; }
+        printf "\n  ${BD}%s${X}\n" "$g"
+        while IFS=$'\t' read -r color name desc; do
+          if [ -n "$X" ]; then
+            local rr=$((16#${color:0:2})) gg=$((16#${color:2:2})) bb=$((16#${color:4:2}))
+            printf "    \033[48;2;%d;%d;%dm  \033[0m \033[38;2;%d;%d;%dm%-15s\033[0m ${DIM}%s${X}\n" "$rr" "$gg" "$bb" "$rr" "$gg" "$bb" "$name" "$desc"
+          else
+            printf "    %-15s  %s  #%s\n" "$name" "$desc" "$color"
+          fi
+        done < <(jq -r --arg g "$g" '.[$g][] | "\(.color)\t\(.name)\t\(.description)"' "$RC/labels.json")
+      done
+      printf "\n  ${DIM}apply with:  huginn apply <owner/repo> <web|k8s|infra>   (adds base + that scope)${X}\n\n"
+      ;;
+    ruleset)
+      printf "\n  ${BD}Branch-protection ruleset${X}  ${DIM}· '%s'${X}\n\n" "$(jq -r .name "$RC/ruleset.json")"
+      while read -r t; do case "$t" in
+        pull_request)           printf "    ${G}✓${X} changes reach the default branch only via a pull request ${DIM}(0 approvals — solo)${X}\n";;
+        required_status_checks) printf "    ${G}✓${X} the ${BD}agentgate${X} check must pass before merge\n";;
+        required_signatures)    printf "    ${G}✓${X} every commit must be signed & Verified\n";;
+        non_fast_forward)       printf "    ${G}✓${X} no force-pushes to the default branch\n";;
+        deletion)               printf "    ${G}✓${X} the default branch can't be deleted\n";;
+        *)                      printf "    ${G}✓${X} %s\n" "$t";;
+      esac; done < <(jq -r '.rules[].type' "$RC/ruleset.json")
+      printf "    ${DIM}↳ admin (you) can bypass in an emergency; targets ~DEFAULT_BRANCH${X}\n\n"
+      ;;
+    doc|md)
+      if [ -t 1 ] && command -v less >/dev/null 2>&1; then less -R "$RC/CONVENTIONS.md"; else cat "$RC/CONVENTIONS.md"; fi
+      ;;
+    *)
+      printf "\n  ${BD}repo-conventions${X}  ${DIM}· the estate standard · %s${X}\n\n" "$RC"
+      printf "  ${BD}huginn conventions labels${X} [scope]   label taxonomy (base + web/k8s/infra), in real colors\n"
+      printf "  ${BD}huginn conventions ruleset${X}          the branch-protection rules, in plain English\n"
+      printf "  ${BD}huginn conventions doc${X}              the full CONVENTIONS.md\n\n"
+      ;;
+  esac
+}
+
+# ── prs (open PRs across the estate) ──────────────────────────────────────
+cmd_prs(){
+  is_help "${1:-}" && { help_prs; return 0; }
+  printf "\n  ${BD}open PRs across the estate${X}  ${DIM}· %s${X}\n\n" "$(date '+%H:%M')"
+  local rows; rows=$(gh search prs --owner "$OWNER" --state open --limit 100 \
+    --json repository,number,title,author --jq '.[] | [.repository.name,(.number|tostring),.title,.author.login] | @tsv' 2>/dev/null)
+  local n=0
+  while IFS=$'\t' read -r repo num title author; do
+    [ -z "$repo" ] && continue; is_family "$repo" && continue
+    printf "  ${C}%-24s${X} ${BD}#%-4s${X} %s ${DIM}(@%s)${X}\n" "$repo" "$num" "$title" "$author"; n=$((n+1))
+  done < <(printf '%s\n' "$rows")
+  [ "$n" -eq 0 ] && printf "  ${G}✓ nothing open${X}\n"
+  printf "\n  ${BD}%d open${X}  ${DIM}· view one:  gh pr view <n> -R %s/<repo>${X}\n\n" "$n" "$OWNER"
+}
+
+# ── new (scaffold a repo to standard) ─────────────────────────────────────
+cmd_new(){
+  is_help "${1:-}" && { help_new; return 0; }
+  local name="" vis="--private" desc="" scope="" dry=0
+  while [ $# -gt 0 ]; do case "$1" in
+    --public) vis="--public";; --private) vis="--private";;
+    --desc) shift; desc="${1:-}";; --scope) shift; scope="${1:-}";;
+    --dry-run|-n) dry=1;; -*) printf "  ${Y}ignoring unknown option: %s${X}\n" "$1";;
+    *) name="$1";;
+  esac; shift; done
+  [ -z "$name" ] && { printf "  ${R}usage:${X} huginn new <name> [--public] [--desc \"…\"] [--scope web|k8s|infra] [--dry-run]\n"; return 1; }
+  local DIR="$ROOT/$name" RC="$ROOT/repo-conventions"
+  [ -e "$DIR" ] && { printf "  ${R}✗ %s already exists locally${X}\n" "$DIR"; return 1; }
+  gh repo view "$OWNER/$name" >/dev/null 2>&1 && { printf "  ${R}✗ %s/%s already exists on GitHub${X}\n" "$OWNER" "$name"; return 1; }
+
+  printf "\n  ${BD}huginn new${X} ${DIM}· scaffold '%s' to standard${X}\n\n" "$name"
+  printf "    visibility  %s\n" "${vis#--}"
+  printf "    files       .agentgate.yml · workflow · CONTRIBUTING.md · README.md · LICENSE · .gitignore\n"
+  printf "    guardrails  ruleset (PR + agentgate + signatures) · base labels%s\n" "$([ -n "$scope" ] && echo " + $scope scope")"
+  [ -n "$desc" ] && printf "    description %s\n" "$desc"
+  if [ "$dry" = 1 ]; then printf "\n  ${DIM}[dry-run] nothing created — drop --dry-run to build it.${X}\n\n"; return 0; fi
+
+  printf "\n"
+  mkdir -p "$DIR/.github/workflows"
+  cp "$RC/.agentgate.yml" "$DIR/.agentgate.yml"
+  cp "$RC/.github/workflows/agentgate.yml" "$DIR/.github/workflows/agentgate.yml"
+  printf '.DS_Store\n*.log\n.env\n' > "$DIR/.gitignore"
+  printf 'MIT License\n\nCopyright (c) 2026 Brett Buskirk\n' > "$DIR/LICENSE"
+  cat > "$DIR/CONTRIBUTING.md" <<'CONTRIB'
+# Contributing
+
+- **No direct commits to `main`** — branch → PR (`gh pr create`) → green checks → merge.
+- **AgentGate runs on every PR** — `secrets` + `dangerous_patterns` block; `scope` is advisory.
+- Commits are signed & Verified; never commit secrets (`.env`, keys are gitignored).
+CONTRIB
+  printf '# %s\n\n%s\n' "$name" "${desc:-_TODO: describe this project._}" > "$DIR/README.md"
+
+  git -C "$DIR" init -q
+  git -C "$DIR" config user.email "$BIZ_EMAIL"; git -C "$DIR" config user.name "Brett Buskirk"
+  git -C "$DIR" add .
+  git -C "$DIR" commit -q -m "chore: initial scaffold with guardrails
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>" && printf "  ${G}✓${X} genesis commit ${DIM}(signed)${X}\n"
+  if ( cd "$DIR" && gh repo create "$OWNER/$name" $vis --source=. --remote=origin --push ) >/dev/null 2>&1; then
+    printf "  ${G}✓${X} created + pushed %s/%s ${DIM}(%s)${X}\n" "$OWNER" "$name" "${vis#--}"
+  else printf "  ${R}✗ gh repo create failed${X}\n"; return 1; fi
+  [ -n "$desc" ] && gh repo edit "$OWNER/$name" --description "$desc" >/dev/null 2>&1
+  gh api -X POST "repos/$OWNER/$name/rulesets" --input "$RC/ruleset.json" >/dev/null 2>&1 && printf "  ${G}✓${X} ruleset applied\n" || printf "  ${Y}∙${X} ruleset step skipped\n"
+  bash "$RC/apply-conventions.sh" "$OWNER/$name" "$scope" >/dev/null 2>&1 && printf "  ${G}✓${X} labels applied%s\n" "$([ -n "$scope" ] && echo " (base + $scope)")"
+  printf "\n  ${BD}%s${X} is live → ${C}https://github.com/%s/%s${X}\n" "$name" "$OWNER" "$name"
+  printf "  ${DIM}next: add a CLAUDE.md brief, milestones, and a project board (repo-conventions §6–7)${X}\n\n"
+}
+
+# ── open (jump to a repo on GitHub) ───────────────────────────────────────
+open_url(){
+  local url="$1" o
+  for o in wslview xdg-open open; do command -v "$o" >/dev/null 2>&1 && { "$o" "$url" >/dev/null 2>&1 & return 0; }; done
+  command -v explorer.exe >/dev/null 2>&1 && { explorer.exe "$url" >/dev/null 2>&1 & return 0; }
+  printf "  ${DIM}(no browser opener found — visit it yourself)${X}\n"
+}
+cmd_open(){
+  is_help "${1:-}" && { help_open; return 0; }
+  local repo="${1:-}" page="${2:-}" base url
+  [ -z "$repo" ] && { printf "  ${R}usage:${X} huginn open <repo> [pr|settings|rules|security|actions|issues]\n"; return 1; }
+  base="https://github.com/$OWNER/$repo"
+  case "$page" in
+    ""|home)            url="$base";;
+    pr|prs|pulls)       url="$base/pulls";;
+    settings|set)       url="$base/settings";;
+    rules|ruleset)      url="$base/settings/rules";;
+    security|sec)       url="$base/settings/security_analysis";;
+    actions|ci)         url="$base/actions";;
+    issues)             url="$base/issues";;
+    *)                  url="$base/$page";;
+  esac
+  printf "  ${DIM}opening${X} ${C}%s${X}\n" "$url"
+  open_url "$url"
+}
+
+# ── branches (surface / prune stray local branches) ───────────────────────
+cmd_branches(){
+  is_help "${1:-}" && { help_branches; return 0; }
+  local PRUNE=0; [ "${1:-}" = "--prune" ] && PRUNE=1
+  printf "\n  ${BD}huginn branches${X}%s\n\n" "$([ "$PRUNE" = 1 ] && echo "  ${DIM}· deleting merged local branches${X}")"
+  local total=0 pruned=0
+  while read -r d; do
+    is_family "$d" && continue
+    local GD="$ROOT/$d" def cur extras mergedset
+    def=$(git -C "$GD" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##'); def=${def:-main}
+    cur=$(git -C "$GD" symbolic-ref --short HEAD 2>/dev/null)
+    extras=$(git -C "$GD" for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null | grep -vx "$def" || true)
+    [ -z "$extras" ] && continue
+    total=$((total+1))
+    mergedset=$(git -C "$GD" for-each-ref --format='%(refname:short)' --merged "$def" refs/heads 2>/dev/null)
+    printf "  ${BD}%s${X} ${DIM}(default: %s)${X}\n" "$d" "$def"
+    while read -r b; do
+      [ -z "$b" ] && continue
+      if grep -qx "$b" <<<"$mergedset"; then
+        if [ "$PRUNE" = 1 ] && [ "$b" != "$cur" ]; then
+          git -C "$GD" branch -d "$b" >/dev/null 2>&1 && { printf "    ${G}✓ deleted${X} %s\n" "$b"; pruned=$((pruned+1)); } || printf "    ${Y}∙ %s (merged, couldn't delete)${X}\n" "$b"
+        else printf "    ${DIM}∙${X} %s ${G}(merged)${X}%s\n" "$b" "$([ "$b" = "$cur" ] && echo " ${Y}[current]${X}")"; fi
+      else printf "    ${DIM}∙${X} %s ${Y}(unmerged)${X}\n" "$b"; fi
+    done <<< "$extras"
+  done < <(repos)
+  [ "$total" -eq 0 ] && printf "  ${G}✓ no stray local branches anywhere${X}\n"
+  if [ "$PRUNE" = 1 ]; then printf "\n  ${BD}%d merged branches deleted${X}\n\n" "$pruned"
+  else printf "\n  ${DIM}%d repos have extra local branches · 'huginn branches --prune' deletes the merged ones${X}\n\n" "$total"; fi
+}
+
+# ── per-command help ──────────────────────────────────────────────────────
+help_status(){
+  printf "\n  ${BD}huginn status${X} [--fetch]\n\n"
+  printf "  At-a-glance dashboard of every git repo in the estate. Fast & local by default.\n\n"
+  printf "  ${BD}Columns${X}\n"
+  printf "    REPO      repo (local folder) name\n"
+  printf "    BRANCH    current branch  ${DIM}(${X}${G}green${X}${DIM}=default, ${X}${C}cyan${X}${DIM}=feature)${X}\n"
+  printf "    LAST      time since the last commit\n"
+  printf "    STATUS    ✓ clean · ● N changed · ↑ahead ↓behind · ⚑N stashes ·\n"
+  printf "              +N br (extra local branches) · ✉? no local email ·\n"
+  printf "              ✉ <addr> (local email ≠ business address)\n\n"
+  printf "  ${BD}Options${X}\n"
+  printf "    -f, --fetch   git fetch each repo first for fresh ahead/behind ${DIM}(network)${X}\n\n"
+}
+help_sync(){
+  printf "\n  ${BD}huginn sync${X}\n\n"
+  printf "  Pull every repo to its default branch — fast-forward only.\n\n"
+  printf "  For each: checkout the default branch, then ${BD}git pull --ff-only${X}.\n"
+  printf "  ${BD}Skips${X} repos with uncommitted changes (won't clobber work) and the\n"
+  printf "  agent-gate family. ${DIM}Never force-pulls or merges — a repo that can't fast-forward\n"
+  printf "  is reported, not touched. Summarizes updated / skipped / problems.${X}\n\n"
+}
+help_doctor(){
+  printf "\n  ${BD}huginn doctor${X} [repo] [--fix] [-v]\n\n"
+  printf "  Audit repos against your conventions; surface only what's off.\n\n"
+  printf "  ${BD}Checks${X}\n"
+  printf "    Baseline (all):       local user.email = business address · ruleset present\n"
+  printf "    Managed (AG-wired):   + agentgate required · signed commits required ·\n"
+  printf "                          .agentgate.yml present · secret scanning on (public)\n"
+  printf "    ${DIM}Dormant/unwired repos get the baseline only; agent-gate family excluded.${X}\n\n"
+  printf "  ${BD}Arguments${X}\n"
+  printf "    repo            audit a single repo (fast) instead of the whole estate\n\n"
+  printf "  ${BD}Options${X}\n"
+  printf "    --fix           auto-fix the safe gaps: set business email, and re-apply the\n"
+  printf "                    standard ruleset on any managed repo where it's missing/drifted\n"
+  printf "    -v, --verbose   also list repos that pass ${DIM}(default: only gaps)${X}\n\n"
+  printf "  ${DIM}Network — reads each repo's ruleset + security settings; a full sweep\n"
+  printf "  takes a minute or two.${X}\n\n"
+}
+help_apply(){
+  printf "\n  ${BD}huginn apply${X} <owner/repo> <scope>\n\n"
+  printf "  Apply the canonical label taxonomy to a repo ${DIM}(idempotent; delegates to\n"
+  printf "  repo-conventions/apply-conventions.sh)${X}.\n\n"
+  printf "  ${BD}Arguments${X}\n"
+  printf "    <owner/repo>    e.g. brett-buskirk/asgard\n"
+  printf "    <scope>         web | k8s | infra  ${DIM}(domain labels on top of the base set)${X}\n\n"
+  printf "  ${BD}Example${X}\n"
+  printf "    huginn apply brett-buskirk/asgard k8s\n\n"
+  printf "  ${DIM}Labels only. Ruleset, git identity, metadata, milestones, and the board are\n"
+  printf "  separate steps — see repo-conventions/CONVENTIONS.md.${X}\n\n"
+}
+help_conventions(){
+  printf "\n  ${BD}huginn conventions${X} [labels [scope] | ruleset | doc]\n\n"
+  printf "  Look up the estate standard (repo-conventions/) — see what you're applying or\n"
+  printf "  being audited against.\n\n"
+  printf "  ${BD}Subtopics${X}\n"
+  printf "    labels [scope]   the label taxonomy, shown in each label's real color\n"
+  printf "                     ${DIM}(scope = web | k8s | infra; omit for all)${X}\n"
+  printf "    ruleset          the branch-protection rules, in plain English\n"
+  printf "    doc              the full CONVENTIONS.md (paged)\n"
+  printf "    ${DIM}(no arg)         overview of what's available${X}\n\n"
+  printf "  ${BD}Examples${X}\n"
+  printf "    huginn conventions labels k8s\n"
+  printf "    huginn conventions ruleset\n\n"
+}
+help_prs(){
+  printf "\n  ${BD}huginn prs${X}\n\n"
+  printf "  List every open pull request across the estate — one line each (repo, #, title,\n"
+  printf "  author). Excludes the agent-gate family. Handy for \"what's in flight / needs a\n"
+  printf "  merge?\" after agents have been working. ${DIM}(network — one search query)${X}\n\n"
+}
+help_new(){
+  printf "\n  ${BD}huginn new${X} <name> [--public] [--desc \"…\"] [--scope web|k8s|infra] [--dry-run]\n\n"
+  printf "  Scaffold a brand-new repo to the full standard, end to end:\n"
+  printf "    git init · local business email · guardrail files (.agentgate.yml + workflow) ·\n"
+  printf "    CONTRIBUTING · README · LICENSE · .gitignore · signed genesis commit ·\n"
+  printf "    private GitHub repo · ruleset (PR + agentgate + signatures) · base+scope labels.\n\n"
+  printf "  ${BD}Options${X}\n"
+  printf "    --public        create public (default: private)\n"
+  printf "    --desc \"…\"       set the repo description\n"
+  printf "    --scope <s>      also apply a label scope (web | k8s | infra)\n"
+  printf "    --dry-run, -n   print the plan, create nothing\n\n"
+  printf "  ${DIM}Example:  huginn new observatory --scope k8s --desc \"DOKS monitoring add-on\"${X}\n\n"
+}
+help_open(){
+  printf "\n  ${BD}huginn open${X} <repo> [page]\n\n"
+  printf "  Open a repo (or one of its pages) on GitHub in your browser.\n\n"
+  printf "  ${BD}Pages${X}  ${DIM}(default: home)${X}\n"
+  printf "    pr · settings · rules · security · actions · issues\n\n"
+  printf "  ${DIM}Example:  huginn open heimdall rules${X}\n\n"
+}
+help_branches(){
+  printf "\n  ${BD}huginn branches${X} [--prune]\n\n"
+  printf "  List every repo that has local branches beyond its default, marking each\n"
+  printf "  ${G}(merged)${X} or ${Y}(unmerged)${X}. Excludes the agent-gate family.\n\n"
+  printf "  ${BD}Options${X}\n"
+  printf "    --prune   delete the branches already merged into the default ${DIM}(safe: git branch -d,\n"
+  printf "              never the current branch, never unmerged work)${X}\n\n"
+}
+
+# ── help ──────────────────────────────────────────────────────────────────
+cmd_help(){
+  printf "\n  ${BD}huginn${X} ${DIM}— estate CLI · %s${X}\n\n" "$ROOT"
+  printf "  ${DIM}create${X}\n"
+  printf "    ${BD}new${X} <name> [opts]      scaffold a new repo to the full standard\n"
+  printf "  ${DIM}inspect${X}\n"
+  printf "    ${BD}status${X} [--fetch]       at-a-glance dashboard (branch · dirty · ahead/behind · flags)\n"
+  printf "    ${BD}prs${X}                    open PRs across the estate\n"
+  printf "    ${BD}branches${X} [--prune]     stray local branches; prune merged ones\n"
+  printf "    ${BD}doctor${X} [repo] [--fix]  audit repos vs your conventions; --fix the safe gaps\n"
+  printf "  ${DIM}operate${X}\n"
+  printf "    ${BD}sync${X}                   pull every repo to its default branch (ff-only, skips dirty)\n"
+  printf "    ${BD}apply${X} <repo> <scope>   apply the label taxonomy to a repo (web|k8s|infra)\n"
+  printf "  ${DIM}reference / navigate${X}\n"
+  printf "    ${BD}conventions${X} [topic]    look up the standard (labels · ruleset · doc)\n"
+  printf "    ${BD}open${X} <repo> [page]     open a repo (or prs/settings/rules) on GitHub\n"
+  printf "    ${BD}help${X}                   this menu\n\n"
+  printf "  ${DIM}run${X} ${BD}huginn <command> help${X} ${DIM}for details & options on any command.${X}\n\n"
+}
+
+case "${1:-help}" in
+  status) shift; cmd_status "$@";;
+  sync)   shift; cmd_sync "$@";;
+  doctor) shift; cmd_doctor "$@";;
+  apply)  shift; cmd_apply "$@";;
+  conventions|conv|std) shift; cmd_conventions "$@";;
+  prs)    shift; cmd_prs "$@";;
+  new)    shift; cmd_new "$@";;
+  open)   shift; cmd_open "$@";;
+  branches|br) shift; cmd_branches "$@";;
+  help|-h|--help) cmd_help;;
+  *) printf "${R}unknown command: %s${X}\n" "$1"; cmd_help; exit 1;;
+esac
