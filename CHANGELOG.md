@@ -6,6 +6,10 @@ All notable changes to huginn are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-01
+
+Generalized from a personal script into a config-driven, self-contained tool — and made public.
+
 ### Added
 - **Config-driven** — settings resolve env → config file → smart defaults: `HUGINN_OWNER`
   (auto-detects from your `gh` login), `HUGINN_EMAIL`/`HUGINN_NAME` (from git config), `HUGINN_ROOT`,
