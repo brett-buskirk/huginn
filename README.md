@@ -48,8 +48,9 @@ Run **`huginn <command> help`** for details and options on any command.
 
 - **Fast and local by default** — git operations only. Network (`gh`) is used only where noted
   (`doctor`, `prs`, `new`, `apply`).
-- **The standard lives in `$HUGINN_ROOT/repo-conventions`** — `labels.json`, `ruleset.json`, and
-  `apply-conventions.sh`. `doctor` audits against it; `apply`/`new` apply it; `conventions` reads it.
+- **Conventions, with a fallback** — huginn ships default guardrail templates in `templates/`, so
+  `new`, `apply`, and `conventions` work out of the box. Point `HUGINN_CONVENTIONS` at your own
+  `repo-conventions` repo (`labels.json`, `ruleset.json`, `apply-conventions.sh`) to override them.
 - **Respects `NO_COLOR`** and non-TTY output.
 
 ## Configuration
@@ -67,8 +68,8 @@ a config with detected defaults, then edit it. Config file:
 | `HUGINN_FAMILY` | _(none)_ | space-separated repos to exclude from `sync`/`doctor` |
 | `HUGINN_CONVENTIONS` | `repo-conventions` | dir under `HUGINN_ROOT` with `labels.json`/`ruleset.json` |
 
-Commands that need the conventions repo (`apply`, `conventions`, parts of `doctor`/`new`) degrade
-gracefully when it's absent.
+Commands that use conventions (`new`, `apply`, `conventions`, `doctor --fix`) fall back to the
+bundled `templates/` when no conventions repo is present, so they work out of the box.
 
 ## License
 

@@ -1,0 +1,32 @@
+{
+  "base": [
+    { "name": "needs-triage", "color": "D93F0B", "description": "Awaiting triage" },
+    { "name": "approved",     "color": "0E8A16", "description": "Approved for implementation" },
+    { "name": "chore",        "color": "C5DEF5", "description": "Tooling, deps, housekeeping" },
+    { "name": "ci",           "color": "BFD4F2", "description": "CI / build pipeline" },
+    { "name": "dependencies", "color": "0366D6", "description": "Dependency updates" },
+    { "name": "security",     "color": "EE0701", "description": "Security-related" },
+    { "name": "release",      "color": "1D76DB", "description": "Version release" },
+    { "name": "breaking",     "color": "B60205", "description": "Breaking change" }
+  ],
+  "web": [
+    { "name": "design",      "color": "D4C5F9", "description": "Visual design / UI" },
+    { "name": "content",     "color": "0E8A16", "description": "Copy / content" },
+    { "name": "a11y",        "color": "5319E7", "description": "Accessibility" },
+    { "name": "seo",         "color": "FBCA04", "description": "SEO / metadata" },
+    { "name": "performance", "color": "1D76DB", "description": "Performance / Lighthouse" }
+  ],
+  "k8s": [
+    { "name": "terraform",     "color": "7B42BC", "description": "Terraform / provisioning" },
+    { "name": "kubernetes",    "color": "326CE5", "description": "Kubernetes resources" },
+    { "name": "argocd",        "color": "EF7B4D", "description": "GitOps / Argo CD" },
+    { "name": "helm",          "color": "0F1689", "description": "Helm charts / values" },
+    { "name": "observability", "color": "F46800", "description": "Metrics, logs, alerting" }
+  ],
+  "infra": [
+    { "name": "terraform",     "color": "7B42BC", "description": "Terraform / provisioning" },
+    { "name": "ansible",       "color": "EE0000", "description": "Ansible roles / playbooks" },
+    { "name": "docker",        "color": "2496ED", "description": "Docker / Compose" },
+    { "name": "observability", "color": "F46800", "description": "Metrics, logs, alerting" }
+  ]
+}
