@@ -28,6 +28,7 @@ is_family(){ case " $FAMILY " in *" $1 "*) return 0;; *) return 1;; esac; }
 is_help(){ case "${1:-}" in help|-h|--help) return 0;; *) return 1;; esac; }
 repos(){ (cd "$ROOT" && for d in */; do [ -d "${d}.git" ] && echo "${d%/}"; done | sort); }
 need_owner(){ [ -n "$OWNER" ] && return 0; OWNER="$(gh api user --jq .login 2>/dev/null)"; [ -n "$OWNER" ] && return 0; printf "  ${R}no GitHub owner set.${X} Set HUGINN_OWNER, add it to %s, or run ${BD}huginn init${X}.\n" "$CONFIG" >&2; return 1; }
+first_of(){ local f; for f in "$@"; do [ -e "$f" ] && { printf '%s' "$f"; return 0; }; done; return 1; }  # your conventions repo, else bundled templates
 
 # ── status ────────────────────────────────────────────────────────────────
 cmd_status(){ is_help "${1:-}" && { help_status; return 0; }; HUGINN_ROOT="$ROOT" exec "$HERE/repo-status.sh" "$@"; }
@@ -83,9 +84,10 @@ cmd_doctor(){
       # managed repo — full standard
       local rtypes=""; [ -n "$rid" ] && rtypes=$(gh api "repos/$OWNER/$d/rulesets/$rid" --jq '[.rules[].type]|join(" ")' 2>/dev/null)
       if [ -z "$rid" ] || [[ "$rtypes" != *required_status_checks* ]] || [[ "$rtypes" != *required_signatures* ]]; then
-        if [ "$FIX" = 1 ] && [ -f "$CONV/ruleset.json" ]; then
-          if [ -n "$rid" ]; then gh api -X PUT "repos/$OWNER/$d/rulesets/$rid" --input "$CONV/ruleset.json" >/dev/null 2>&1
-          else gh api -X POST "repos/$OWNER/$d/rulesets" --input "$CONV/ruleset.json" >/dev/null 2>&1; fi
+        local rsj; rsj="$(first_of "$CONV/ruleset.json" "$HERE/templates/ruleset.json")"
+        if [ "$FIX" = 1 ] && [ -n "$rsj" ]; then
+          if [ -n "$rid" ]; then gh api -X PUT "repos/$OWNER/$d/rulesets/$rid" --input "$rsj" >/dev/null 2>&1
+          else gh api -X POST "repos/$OWNER/$d/rulesets" --input "$rsj" >/dev/null 2>&1; fi
           issues+=("${G}✚ruleset${X}"); fixed=$((fixed+1))
         else
           [[ "$rtypes" != *required_status_checks* ]] && issues+=("${Y}gate-not-required${X}")
@@ -113,19 +115,21 @@ cmd_doctor(){
 }
 
 # ── apply ─────────────────────────────────────────────────────────────────
-cmd_apply(){ is_help "${1:-}" && { help_apply; return 0; }; [ -x "$CONV/apply-conventions.sh" ] || { printf "  ${R}no conventions found at %s${X} ${DIM}(set HUGINN_CONVENTIONS or run huginn init)${X}\n" "$CONV"; return 1; }; exec "$CONV/apply-conventions.sh" "$@"; }
+cmd_apply(){ is_help "${1:-}" && { help_apply; return 0; }; local a; a="$(first_of "$CONV/apply-conventions.sh" "$HERE/templates/apply-conventions.sh")"; [ -n "$a" ] || { printf "  ${R}no apply-conventions.sh found${X}\n"; return 1; }; exec "$a" "$@"; }
 
 # ── conventions (look up the standard) ────────────────────────────────────
 cmd_conventions(){
   is_help "${1:-}" && { help_conventions; return 0; }
-  local RC="$CONV"
-  [ -d "$RC" ] || { printf "\n  ${R}repo-conventions not found at %s${X}\n\n" "$RC"; return 1; }
+  local RC="$CONV" LJ RJ
+  LJ="$(first_of "$RC/labels.json" "$HERE/templates/labels.json")"
+  RJ="$(first_of "$RC/ruleset.json" "$HERE/templates/ruleset.json")"
   case "${1:-overview}" in
     labels)
-      printf "\n  ${BD}Label taxonomy${X}  ${DIM}· repo-conventions/labels.json${X}\n"
-      local groups; if [ -n "${2:-}" ]; then groups="$2"; else groups=$(jq -r 'keys[]' "$RC/labels.json"); fi
+      [ -n "$LJ" ] || { printf "\n  ${R}no labels.json found${X}\n\n"; return 1; }
+      printf "\n  ${BD}Label taxonomy${X}  ${DIM}· %s${X}\n" "$LJ"
+      local groups; if [ -n "${2:-}" ]; then groups="$2"; else groups=$(jq -r 'keys[]' "$LJ"); fi
       for g in $groups; do
-        jq -e --arg g "$g" 'has($g)' "$RC/labels.json" >/dev/null 2>&1 || { printf "\n  ${Y}no such group: %s  (have: %s)${X}\n" "$g" "$(jq -r 'keys|join(", ")' "$RC/labels.json")"; continue; }
+        jq -e --arg g "$g" 'has($g)' "$LJ" >/dev/null 2>&1 || { printf "\n  ${Y}no such group: %s  (have: %s)${X}\n" "$g" "$(jq -r 'keys|join(", ")' "$LJ")"; continue; }
         printf "\n  ${BD}%s${X}\n" "$g"
         while IFS=$'\t' read -r color name desc; do
           if [ -n "$X" ]; then
@@ -134,12 +138,13 @@ cmd_conventions(){
           else
             printf "    %-15s  %s  #%s\n" "$name" "$desc" "$color"
           fi
-        done < <(jq -r --arg g "$g" '.[$g][] | "\(.color)\t\(.name)\t\(.description)"' "$RC/labels.json")
+        done < <(jq -r --arg g "$g" '.[$g][] | "\(.color)\t\(.name)\t\(.description)"' "$LJ")
       done
       printf "\n  ${DIM}apply with:  huginn apply <owner/repo> <web|k8s|infra>   (adds base + that scope)${X}\n\n"
       ;;
     ruleset)
-      printf "\n  ${BD}Branch-protection ruleset${X}  ${DIM}· '%s'${X}\n\n" "$(jq -r .name "$RC/ruleset.json")"
+      [ -n "$RJ" ] || { printf "\n  ${R}no ruleset.json found${X}\n\n"; return 1; }
+      printf "\n  ${BD}Branch-protection ruleset${X}  ${DIM}· '%s'${X}\n\n" "$(jq -r .name "$RJ")"
       while read -r t; do case "$t" in
         pull_request)           printf "    ${G}✓${X} changes reach the default branch only via a pull request ${DIM}(0 approvals — solo)${X}\n";;
         required_status_checks) printf "    ${G}✓${X} the ${BD}agentgate${X} check must pass before merge\n";;
@@ -147,14 +152,16 @@ cmd_conventions(){
         non_fast_forward)       printf "    ${G}✓${X} no force-pushes to the default branch\n";;
         deletion)               printf "    ${G}✓${X} the default branch can't be deleted\n";;
         *)                      printf "    ${G}✓${X} %s\n" "$t";;
-      esac; done < <(jq -r '.rules[].type' "$RC/ruleset.json")
-      printf "    ${DIM}↳ admin (you) can bypass in an emergency; targets ~DEFAULT_BRANCH${X}\n\n"
+      esac; done < <(jq -r '.rules[].type' "$RJ")
+      printf "    ${DIM}↳ admin can bypass in an emergency; targets ~DEFAULT_BRANCH${X}\n\n"
       ;;
     doc|md)
-      if [ -t 1 ] && command -v less >/dev/null 2>&1; then less -R "$RC/CONVENTIONS.md"; else cat "$RC/CONVENTIONS.md"; fi
+      if [ -f "$RC/CONVENTIONS.md" ]; then
+        if [ -t 1 ] && command -v less >/dev/null 2>&1; then less -R "$RC/CONVENTIONS.md"; else cat "$RC/CONVENTIONS.md"; fi
+      else printf "\n  ${Y}no CONVENTIONS.md${X} ${DIM}(point HUGINN_CONVENTIONS at a repo that has one)${X}\n\n"; fi
       ;;
     *)
-      printf "\n  ${BD}repo-conventions${X}  ${DIM}· the estate standard · %s${X}\n\n" "$RC"
+      printf "\n  ${BD}conventions${X}  ${DIM}· source: %s${X}\n\n" "$([ -d "$RC" ] && echo "$RC" || echo "bundled templates")"
       printf "  ${BD}huginn conventions labels${X} [scope]   label taxonomy (base + web/k8s/infra), in real colors\n"
       printf "  ${BD}huginn conventions ruleset${X}          the branch-protection rules, in plain English\n"
       printf "  ${BD}huginn conventions doc${X}              the full CONVENTIONS.md\n\n"
@@ -190,25 +197,26 @@ cmd_new(){
     *) name="$1";;
   esac; shift; done
   [ -z "$name" ] && { printf "  ${R}usage:${X} huginn new <name> [--public] [--desc \"…\"] [--scope web|k8s|infra] [--dry-run]\n"; return 1; }
-  local DIR="$ROOT/$name" RC="$CONV" have_conv=0
-  [ -d "$RC" ] && have_conv=1
+  local DIR="$ROOT/$name" RC="$CONV" ag_cfg ag_wf ruleset apply src
   [ -e "$DIR" ] && { printf "  ${R}✗ %s already exists locally${X}\n" "$DIR"; return 1; }
   gh repo view "$OWNER/$name" >/dev/null 2>&1 && { printf "  ${R}✗ %s/%s already exists on GitHub${X}\n" "$OWNER" "$name"; return 1; }
+  ag_cfg="$(first_of "$RC/.agentgate.yml" "$HERE/templates/agentgate-config.yml")"
+  ag_wf="$(first_of "$RC/.github/workflows/agentgate.yml" "$HERE/templates/agentgate-workflow.yml")"
+  ruleset="$(first_of "$RC/ruleset.json" "$HERE/templates/ruleset.json")"
+  apply="$(first_of "$RC/apply-conventions.sh" "$HERE/templates/apply-conventions.sh")"
+  [ -d "$RC" ] && src="$RC" || src="bundled templates"
 
   printf "\n  ${BD}huginn new${X} ${DIM}· scaffold '%s'${X}\n\n" "$name"
   printf "    owner       %s\n" "$OWNER"
   printf "    visibility  %s\n" "${vis#--}"
-  if [ "$have_conv" = 1 ]; then printf "    guardrails  .agentgate.yml · workflow · ruleset · labels%s ${DIM}(from %s)${X}\n" "$([ -n "$scope" ] && echo " + $scope")" "${CONV##*/}"
-  else printf "    ${Y}guardrails  none — no conventions at %s (bare repo)${X}\n" "$CONV"; fi
+  printf "    guardrails  .agentgate.yml · workflow · ruleset · labels%s ${DIM}(from %s)${X}\n" "$([ -n "$scope" ] && echo " + $scope")" "$src"
   [ -n "$desc" ] && printf "    description %s\n" "$desc"
   if [ "$dry" = 1 ]; then printf "\n  ${DIM}[dry-run] nothing created — drop --dry-run to build it.${X}\n\n"; return 0; fi
 
   printf "\n"
   mkdir -p "$DIR/.github/workflows"
-  if [ "$have_conv" = 1 ]; then
-    cp "$RC/.agentgate.yml" "$DIR/.agentgate.yml" 2>/dev/null
-    cp "$RC/.github/workflows/agentgate.yml" "$DIR/.github/workflows/agentgate.yml" 2>/dev/null
-  fi
+  [ -n "$ag_cfg" ] && cp "$ag_cfg" "$DIR/.agentgate.yml"
+  [ -n "$ag_wf" ]  && cp "$ag_wf"  "$DIR/.github/workflows/agentgate.yml"
   printf '.DS_Store\n*.log\n' > "$DIR/.gitignore"
   printf 'MIT License\n\nCopyright (c) %s %s\n' "$(date +%Y)" "$BIZ_NAME" > "$DIR/LICENSE"
   cat > "$DIR/CONTRIBUTING.md" <<'CONTRIB'
@@ -228,10 +236,8 @@ CONTRIB
     printf "  ${G}✓${X} created + pushed %s/%s ${DIM}(%s)${X}\n" "$OWNER" "$name" "${vis#--}"
   else printf "  ${R}✗ gh repo create failed${X}\n"; return 1; fi
   [ -n "$desc" ] && gh repo edit "$OWNER/$name" --description "$desc" >/dev/null 2>&1
-  if [ "$have_conv" = 1 ]; then
-    [ -f "$RC/ruleset.json" ] && gh api -X POST "repos/$OWNER/$name/rulesets" --input "$RC/ruleset.json" >/dev/null 2>&1 && printf "  ${G}✓${X} ruleset applied\n"
-    [ -x "$RC/apply-conventions.sh" ] && bash "$RC/apply-conventions.sh" "$OWNER/$name" "$scope" >/dev/null 2>&1 && printf "  ${G}✓${X} labels applied\n"
-  fi
+  [ -n "$ruleset" ] && gh api -X POST "repos/$OWNER/$name/rulesets" --input "$ruleset" >/dev/null 2>&1 && printf "  ${G}✓${X} ruleset applied\n"
+  [ -n "$apply" ] && bash "$apply" "$OWNER/$name" "$scope" >/dev/null 2>&1 && printf "  ${G}✓${X} labels applied\n"
   printf "\n  ${BD}%s${X} → ${C}https://github.com/%s/%s${X}\n\n" "$name" "$OWNER" "$name"
 }
 

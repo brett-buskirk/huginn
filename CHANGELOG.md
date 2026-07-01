@@ -11,6 +11,10 @@ All notable changes to huginn are documented here. The format is based on
   (auto-detects from your `gh` login), `HUGINN_EMAIL`/`HUGINN_NAME` (from git config), `HUGINN_ROOT`,
   `HUGINN_FAMILY`, `HUGINN_CONVENTIONS`. Config lives at `~/.config/huginn/config`.
 - **`init`** — writes a config file with detected defaults.
+- **Bundled default templates** (`templates/`) — huginn now ships the guardrail workflow,
+  `.agentgate.yml`, `ruleset.json`, `labels.json`, and `apply-conventions.sh`. `new`, `apply`, and
+  `conventions` fall back to these when no `repo-conventions` repo is present, so the tool is
+  self-contained; a `HUGINN_CONVENTIONS` repo overrides them.
 
 ### Changed
 - Removed the hardcoded owner/email/name/conventions path. Commands that need the conventions repo

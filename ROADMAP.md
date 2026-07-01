@@ -1,16 +1,17 @@
 # Roadmap
 
-## Toward public / reusable (the big one)
+## Toward public / reusable
 
-huginn is currently wired to a single owner and expects a specific `repo-conventions` layout. To be
-useful to anyone else, it needs to become **config-driven**:
-
-- [ ] A `huginn config` / `~/.config/huginn/config` (or `.huginnrc`) for `OWNER`, business email,
-      the `FAMILY` exclusions, and the conventions source — no hardcoded `brett-buskirk`.
-- [ ] Make the `repo-conventions` dependency optional / pluggable (graceful when absent; `doctor`
-      degrades to the checks it can still run).
-- [ ] A `huginn init` that sets up a new estate (creates a `repo-conventions` from a template).
-- [ ] Then flip the repo public.
+- [x] **Config-driven** — `~/.config/huginn/config` (env → file → smart defaults) for owner, email,
+      name, root, family, and the conventions source. No hardcoded owner; `huginn init` detects
+      defaults from `gh` + git.
+- [x] **`repo-conventions` dependency made optional** — huginn ships bundled `templates/` (guardrail
+      workflow, `.agentgate.yml`, `ruleset.json`, `labels.json`, `apply-conventions.sh`) and falls
+      back to them, so `new`/`apply`/`conventions`/`doctor` work without a conventions repo. Point
+      `HUGINN_CONVENTIONS` at your own repo to override.
+- [ ] **Doc-accuracy pass** — reconcile README / CHANGELOG / in-tool help / header comments with the
+      config-driven, self-contained reality before going public.
+- [ ] **Flip the repo public.**
 
 ## Command ideas
 
