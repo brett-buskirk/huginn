@@ -19,6 +19,14 @@ All notable changes to huginn are documented here. The format is based on
 ### Changed
 - Removed the hardcoded owner/email/name/conventions path. Commands that need the conventions repo
   now degrade gracefully when it's absent (a step toward the tool being reusable by others).
+- Docs and in-tool help reworded for the config-driven, self-contained reality: generic
+  `$HUGINN_FAMILY`/`HUGINN_CONVENTIONS` references instead of estate-specific ones, and a complete
+  command list in the script header.
+
+### Fixed
+- `status` no longer compares every repo against a hardcoded personal email — `repo-status.sh` now
+  reads the business email from `HUGINN_EMAIL` (passed by `huginn`) or falls back to `git config
+  user.email`. Previously a fresh clone flagged all repos as wrong-email.
 
 ## [0.1.0] - 2026-07-01
 

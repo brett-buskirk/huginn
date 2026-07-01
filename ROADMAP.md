@@ -9,8 +9,8 @@
       workflow, `.agentgate.yml`, `ruleset.json`, `labels.json`, `apply-conventions.sh`) and falls
       back to them, so `new`/`apply`/`conventions`/`doctor` work without a conventions repo. Point
       `HUGINN_CONVENTIONS` at your own repo to override.
-- [ ] **Doc-accuracy pass** — reconcile README / CHANGELOG / in-tool help / header comments with the
-      config-driven, self-contained reality before going public.
+- [x] **Doc-accuracy pass** — README / CHANGELOG / in-tool help / header comments reconciled with the
+      config-driven, self-contained reality; hardcoded personal email removed from `status`.
 - [ ] **Flip the repo public.**
 
 ## Command ideas
