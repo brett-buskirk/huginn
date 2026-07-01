@@ -11,7 +11,7 @@
       `HUGINN_CONVENTIONS` at your own repo to override.
 - [x] **Doc-accuracy pass** — README / CHANGELOG / in-tool help / header comments reconciled with the
       config-driven, self-contained reality; hardcoded personal email removed from `status`.
-- [ ] **Flip the repo public.**
+- [x] **Flip the repo public.** ✅ Released as v0.2.0 (2026-07-01).
 
 ## Command ideas
 
