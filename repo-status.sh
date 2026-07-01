@@ -8,7 +8,7 @@
 # branches) · ✉? no local email · ✉ <addr> (local email ≠ business address)
 set -uo pipefail
 ROOT="${HUGINN_ROOT:-$HOME/github-repos}"
-BIZ_EMAIL="brett@brett-buskirk.dev"
+BIZ_EMAIL="${HUGINN_EMAIL:-$(git config user.email 2>/dev/null)}"   # set by huginn; else your git email
 FETCH=0; case "${1:-}" in --fetch|-f) FETCH=1;; --help|-h) sed -n '2,9p' "$0"; exit 0;; esac
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then

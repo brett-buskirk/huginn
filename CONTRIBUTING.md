@@ -15,5 +15,6 @@
   except where a comment already does (the truecolor label swatches, which check `$X` first).
 - Each subcommand is a `cmd_<name>` function with a matching `help_<name>`; wire new ones into the
   `case` dispatcher and the `cmd_help` menu.
-- Paths: `$HERE` = where the tool lives; `$ROOT` = the estate it manages (`$HUGINN_ROOT`). Use
-  `$ROOT` for anything touching managed repos or `repo-conventions`.
+- Paths: `$HERE` = where the tool lives (and its bundled `templates/`); `$ROOT` = the estate it
+  manages (`$HUGINN_ROOT`); `$CONV` = the conventions source. Resolve conventions files with
+  `first_of "$CONV/<file>" "$HERE/templates/<file>"` so commands fall back to the bundled defaults.

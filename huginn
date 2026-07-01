@@ -2,11 +2,8 @@
 # huginn — estate-management CLI. Manages the repos in $HUGINN_ROOT (default ~/github-repos).
 # Odin's raven: flies the realms, reports back. Working name — alias/rename freely.
 #
-#   huginn status [--fetch]        at-a-glance dashboard of every repo
-#   huginn sync                    pull each repo to its default branch (ff-only)
-#   huginn doctor [repo] [--fix]   audit repos against repo-conventions; --fix the safe stuff
-#   huginn apply <repo> <scope>    apply the label taxonomy (delegates to apply-conventions.sh)
-#   huginn help
+#   huginn status | sync | doctor | new | init | apply | conventions | prs | branches | open
+#   run 'huginn help' for the menu, or 'huginn <command> help' for per-command detail.
 set -uo pipefail
 SELF="$(readlink -f "$0" 2>/dev/null || echo "$0")"; HERE="$(cd "$(dirname "$SELF")" && pwd)"
 # ── configuration — env  >  config file  >  smart defaults ────────────────
@@ -31,7 +28,7 @@ need_owner(){ [ -n "$OWNER" ] && return 0; OWNER="$(gh api user --jq .login 2>/d
 first_of(){ local f; for f in "$@"; do [ -e "$f" ] && { printf '%s' "$f"; return 0; }; done; return 1; }  # your conventions repo, else bundled templates
 
 # ── status ────────────────────────────────────────────────────────────────
-cmd_status(){ is_help "${1:-}" && { help_status; return 0; }; HUGINN_ROOT="$ROOT" exec "$HERE/repo-status.sh" "$@"; }
+cmd_status(){ is_help "${1:-}" && { help_status; return 0; }; HUGINN_ROOT="$ROOT" HUGINN_EMAIL="$BIZ_EMAIL" exec "$HERE/repo-status.sh" "$@"; }
 
 # ── sync ──────────────────────────────────────────────────────────────────
 cmd_sync(){
@@ -58,7 +55,7 @@ cmd_doctor(){
   for a in "$@"; do case "$a" in
     --fix) FIX=1;; -v|--verbose) verbose=1;; -*) ;; *) target="$a";; esac; done
 
-  printf "\n  ${BD}huginn doctor${X}  ${DIM}· audit vs repo-conventions%s · %s${X}\n" \
+  printf "\n  ${BD}huginn doctor${X}  ${DIM}· audit vs conventions%s · %s${X}\n" \
     "$([ "$FIX" = 1 ] && echo ' · FIX mode')" "$(date '+%H:%M')"
   printf "  ${DIM}(network — checks rulesets + security settings per repo)${X}\n\n"
 
@@ -110,7 +107,7 @@ cmd_doctor(){
 
   printf "\n  ${G}%d managed & compliant${X} ${DIM}·${X} ${Y}%d with gaps${X} ${DIM}·${X} ${DIM}%d dormant${X}" "$ok" "$gap" "$dormant"
   [ "$FIX" = 1 ] && printf " ${DIM}·${X} ${G}%d fixed${X}" "$fixed"
-  [ "$FIX" = 0 ] && [ "$gap" -gt 0 ] && printf "\n  ${DIM}run 'huginn doctor --fix' to auto-fix local-email gaps; settings gaps → see repo-conventions${X}"
+  [ "$FIX" = 0 ] && [ "$gap" -gt 0 ] && printf "\n  ${DIM}run 'huginn doctor --fix' to auto-fix local-email gaps; other gaps → 'huginn conventions'${X}"
   printf "\n\n"
 }
 
@@ -346,8 +343,8 @@ help_sync(){
   printf "\n  ${BD}huginn sync${X}\n\n"
   printf "  Pull every repo to its default branch — fast-forward only.\n\n"
   printf "  For each: checkout the default branch, then ${BD}git pull --ff-only${X}.\n"
-  printf "  ${BD}Skips${X} repos with uncommitted changes (won't clobber work) and the\n"
-  printf "  agent-gate family. ${DIM}Never force-pulls or merges — a repo that can't fast-forward\n"
+  printf "  ${BD}Skips${X} repos with uncommitted changes (won't clobber work) and any\n"
+  printf "  repos in \$HUGINN_FAMILY. ${DIM}Never force-pulls or merges — a repo that can't fast-forward\n"
   printf "  is reported, not touched. Summarizes updated / skipped / problems.${X}\n\n"
 }
 help_doctor(){
@@ -357,7 +354,7 @@ help_doctor(){
   printf "    Baseline (all):       local user.email = business address · ruleset present\n"
   printf "    Managed (AG-wired):   + agentgate required · signed commits required ·\n"
   printf "                          .agentgate.yml present · secret scanning on (public)\n"
-  printf "    ${DIM}Dormant/unwired repos get the baseline only; agent-gate family excluded.${X}\n\n"
+  printf "    ${DIM}Dormant/unwired repos get the baseline only; \$HUGINN_FAMILY excluded.${X}\n\n"
   printf "  ${BD}Arguments${X}\n"
   printf "    repo            audit a single repo (fast) instead of the whole estate\n\n"
   printf "  ${BD}Options${X}\n"
@@ -370,19 +367,19 @@ help_doctor(){
 help_apply(){
   printf "\n  ${BD}huginn apply${X} <owner/repo> <scope>\n\n"
   printf "  Apply the canonical label taxonomy to a repo ${DIM}(idempotent; delegates to\n"
-  printf "  repo-conventions/apply-conventions.sh)${X}.\n\n"
+  printf "  apply-conventions.sh — your conventions repo's, or the bundled one)${X}.\n\n"
   printf "  ${BD}Arguments${X}\n"
-  printf "    <owner/repo>    e.g. brett-buskirk/asgard\n"
+  printf "    <owner/repo>    e.g. youruser/website\n"
   printf "    <scope>         web | k8s | infra  ${DIM}(domain labels on top of the base set)${X}\n\n"
   printf "  ${BD}Example${X}\n"
-  printf "    huginn apply brett-buskirk/asgard k8s\n\n"
+  printf "    huginn apply youruser/website web\n\n"
   printf "  ${DIM}Labels only. Ruleset, git identity, metadata, milestones, and the board are\n"
-  printf "  separate steps — see repo-conventions/CONVENTIONS.md.${X}\n\n"
+  printf "  separate steps — see 'huginn conventions doc'.${X}\n\n"
 }
 help_conventions(){
   printf "\n  ${BD}huginn conventions${X} [labels [scope] | ruleset | doc]\n\n"
-  printf "  Look up the estate standard (repo-conventions/) — see what you're applying or\n"
-  printf "  being audited against.\n\n"
+  printf "  Look up the standard you apply and are audited against — your ${BD}HUGINN_CONVENTIONS${X}\n"
+  printf "  repo, or the bundled defaults when there isn't one.\n\n"
   printf "  ${BD}Subtopics${X}\n"
   printf "    labels [scope]   the label taxonomy, shown in each label's real color\n"
   printf "                     ${DIM}(scope = web | k8s | infra; omit for all)${X}\n"
@@ -396,7 +393,7 @@ help_conventions(){
 help_prs(){
   printf "\n  ${BD}huginn prs${X}\n\n"
   printf "  List every open pull request across the estate — one line each (repo, #, title,\n"
-  printf "  author). Excludes the agent-gate family. Handy for \"what's in flight / needs a\n"
+  printf "  author). Excludes repos in \$HUGINN_FAMILY. Handy for \"what's in flight / needs a\n"
   printf "  merge?\" after agents have been working. ${DIM}(network — one search query)${X}\n\n"
 }
 help_new(){
@@ -417,12 +414,12 @@ help_open(){
   printf "  Open a repo (or one of its pages) on GitHub in your browser.\n\n"
   printf "  ${BD}Pages${X}  ${DIM}(default: home)${X}\n"
   printf "    pr · settings · rules · security · actions · issues\n\n"
-  printf "  ${DIM}Example:  huginn open heimdall rules${X}\n\n"
+  printf "  ${DIM}Example:  huginn open website rules${X}\n\n"
 }
 help_branches(){
   printf "\n  ${BD}huginn branches${X} [--prune]\n\n"
   printf "  List every repo that has local branches beyond its default, marking each\n"
-  printf "  ${G}(merged)${X} or ${Y}(unmerged)${X}. Excludes the agent-gate family.\n\n"
+  printf "  ${G}(merged)${X} or ${Y}(unmerged)${X}. Excludes repos in \$HUGINN_FAMILY.\n\n"
   printf "  ${BD}Options${X}\n"
   printf "    --prune   delete the branches already merged into the default ${DIM}(safe: git branch -d,\n"
   printf "              never the current branch, never unmerged work)${X}\n\n"
