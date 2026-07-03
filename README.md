@@ -74,8 +74,9 @@ bundled `templates/` when no conventions repo is present, so they work out of th
 
 ## Backstory
 
-huginn is the "GitHub AI Overlord" from a piece I wrote on running AI coding agents with a chain of
-command — [*I Built an Org Chart for My AI Agents*](https://www.linkedin.com/pulse/i-built-org-chart-my-ai-agents-brett-buskirk-h0iic/).
+huginn is the estate-management tool behind the "GitHub AI Overlord" — the orchestrating agent in a
+piece I wrote on running AI coding agents with a chain of command:
+[*I Built an Org Chart for My AI Agents*](https://www.linkedin.com/pulse/i-built-org-chart-my-ai-agents-brett-buskirk-h0iic/).
 
 ## License
 
