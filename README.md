@@ -72,6 +72,11 @@ a config with detected defaults, then edit it. Config file:
 Commands that use conventions (`new`, `apply`, `conventions`, `doctor --fix`) fall back to the
 bundled `templates/` when no conventions repo is present, so they work out of the box.
 
+## Backstory
+
+huginn is the "GitHub AI Overlord" from a piece I wrote on running AI coding agents with a chain of
+command — [*I Built an Org Chart for My AI Agents*](https://www.linkedin.com/pulse/i-built-org-chart-my-ai-agents-brett-buskirk-h0iic/).
+
 ## License
 
 [MIT](LICENSE) © 2026 Brett Buskirk
