@@ -56,6 +56,9 @@ Run **`huginn <command> help`** for details and options on any command.
 - **Document suite** — `doctor` checks each managed repo carries the required docs (README · LICENSE ·
   CHANGELOG · ROADMAP · CONTRIBUTING), `new` scaffolds them, and `conventions suite` lists them. The
   set is defined in `docs-suite.json`.
+- **Exemptions** — repos that aren't code projects (a profile repo, personal/creative repos, or repos
+  managed elsewhere) are skipped everywhere. Listed in `exemptions.json` and merged with the
+  `HUGINN_FAMILY` env var.
 - **Respects `NO_COLOR`** and non-TTY output.
 
 ## Configuration
@@ -70,8 +73,8 @@ a config with detected defaults, then edit it. Config file:
 | `HUGINN_ROOT` | `~/github-repos` | directory of repos to manage |
 | `HUGINN_EMAIL` | your git email | commit email for `new` / `doctor --fix` |
 | `HUGINN_NAME` | your git name | committer name |
-| `HUGINN_FAMILY` | _(none)_ | space-separated repos to exclude from `sync`/`doctor` |
-| `HUGINN_CONVENTIONS` | `repo-conventions` | dir under `HUGINN_ROOT` with `labels.json`/`ruleset.json` |
+| `HUGINN_FAMILY` | _(none)_ | space-separated repos to exclude, merged with `exemptions.json` |
+| `HUGINN_CONVENTIONS` | `repo-conventions` | dir under `HUGINN_ROOT` with `labels.json`/`ruleset.json`/`docs-suite.json`/`exemptions.json` |
 
 Commands that use conventions (`new`, `apply`, `conventions`, `doctor --fix`) fall back to the
 bundled `templates/` when no conventions repo is present, so they work out of the box.
