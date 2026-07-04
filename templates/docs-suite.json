@@ -1,0 +1,15 @@
+{
+  "note": "The document suite every estate repo carries. huginn doctor verifies the required files exist on managed repos; huginn new scaffolds them. Recommended files apply by condition (see 'when').",
+  "required": [
+    { "file": "README.md",       "purpose": "What it is, why it exists, install, and usage." },
+    { "file": "LICENSE",         "purpose": "The license (MIT (c) 2026 Brett Buskirk across the estate)." },
+    { "file": "CHANGELOG.md",    "purpose": "Notable changes — Keep a Changelog + SemVer." },
+    { "file": "ROADMAP.md",      "purpose": "What's planned / phased next, with checkboxes." },
+    { "file": "CONTRIBUTING.md", "purpose": "How to contribute — branch to PR, the checks, the conventions." }
+  ],
+  "recommended": [
+    { "file": "SECURITY.md",     "purpose": "Responsible use + vulnerability reporting.", "when": "public or security-tooling repos" },
+    { "file": "CLAUDE.md",       "purpose": "The build brief / handoff.",                 "when": "repos built by an agent from a spec" },
+    { "file": "ARCHITECTURE.md", "purpose": "Source-of-truth design doc.",                "when": "larger app or library repos" }
+  ]
+}
