@@ -31,6 +31,7 @@ create
   new <name> [opts]      scaffold a new repo to the full standard
 inspect
   status [--fetch]       at-a-glance dashboard (branch · dirty · ahead/behind · flags)
+         [--public|--private]  filter the dashboard by repo visibility
   prs                    open PRs across the estate
   branches [--prune]     stray local branches; prune merged ones
   doctor [repo] [--fix]  audit repos vs your conventions; --fix the safe gaps
@@ -38,7 +39,7 @@ operate
   sync                   pull every repo to its default branch (ff-only, skips dirty)
   apply <repo> <scope>   apply the label taxonomy to a repo (web|k8s|infra)
 reference / navigate
-  conventions [topic]    look up the standard (labels · ruleset · doc)
+  conventions [topic]    look up the standard (labels · ruleset · suite · doc)
   open <repo> [page]     open a repo (or prs/settings/rules) on GitHub
   help                   this menu
 ```
