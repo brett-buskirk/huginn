@@ -6,6 +6,13 @@ All notable changes to huginn are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **Document-suite convention** — `doctor` now verifies each managed repo carries the required docs
+  (README · LICENSE · CHANGELOG · ROADMAP · CONTRIBUTING), flagging any missing as `docs:<name>`;
+  `new` scaffolds CHANGELOG + ROADMAP alongside the existing README/LICENSE/CONTRIBUTING; and
+  `conventions suite` lists the required + recommended docs. The list is read from
+  `repo-conventions/docs-suite.json` (bundled fallback in `templates/`).
+
 ## [0.2.0] - 2026-07-01
 
 Generalized from a personal script into a config-driven, self-contained tool — and made public.

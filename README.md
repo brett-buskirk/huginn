@@ -49,9 +49,13 @@ Run **`huginn <command> help`** for details and options on any command.
 
 - **Fast and local by default** — git operations only. Network (`gh`) is used only where noted
   (`doctor`, `prs`, `new`, `apply`).
-- **Conventions, with a fallback** — huginn ships default guardrail templates in `templates/`, so
-  `new`, `apply`, and `conventions` work out of the box. Point `HUGINN_CONVENTIONS` at your own
-  `repo-conventions` repo (`labels.json`, `ruleset.json`, `apply-conventions.sh`) to override them.
+- **Conventions, with a fallback** — huginn ships default templates in `templates/`, so `new`,
+  `apply`, and `conventions` work out of the box. Point `HUGINN_CONVENTIONS` at your own
+  `repo-conventions` repo (`labels.json`, `ruleset.json`, `apply-conventions.sh`, `docs-suite.json`)
+  to override them.
+- **Document suite** — `doctor` checks each managed repo carries the required docs (README · LICENSE ·
+  CHANGELOG · ROADMAP · CONTRIBUTING), `new` scaffolds them, and `conventions suite` lists them. The
+  set is defined in `docs-suite.json`.
 - **Respects `NO_COLOR`** and non-TTY output.
 
 ## Configuration
