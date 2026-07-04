@@ -7,6 +7,8 @@ All notable changes to huginn are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- **`status --public` / `--private`** — filter the dashboard by repo visibility. Opt-in (one `gh repo
+  list` call); `status` stays fast and local by default.
 - **Configurable exemptions** — repos that aren't code projects (profile repo, personal/creative
   repos, repos managed elsewhere) are read from `repo-conventions/exemptions.json` and merged with the
   `HUGINN_FAMILY` env var; exempt repos are skipped in `doctor`/`sync`/`prs`/`branches`. (Renamed the

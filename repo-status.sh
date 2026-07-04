@@ -3,13 +3,22 @@
 #
 #   ./repo-status.sh            fast, local (no network)
 #   ./repo-status.sh --fetch    git fetch each repo first → fresh ahead/behind (network)
+#   ./repo-status.sh --public   only public repos   (network — reads visibility via gh)
+#   ./repo-status.sh --private  only private repos  (network)
 #
 # STATUS legend: ✓ clean · ● N changed · ↑ ahead · ↓ behind · ⚑ stashes · +N br (extra local
 # branches) · ✉? no local email · ✉ <addr> (local email ≠ business address)
 set -uo pipefail
 ROOT="${HUGINN_ROOT:-$HOME/github-repos}"
 BIZ_EMAIL="${HUGINN_EMAIL:-$(git config user.email 2>/dev/null)}"   # set by huginn; else your git email
-FETCH=0; case "${1:-}" in --fetch|-f) FETCH=1;; --help|-h) sed -n '2,9p' "$0"; exit 0;; esac
+OWNER="${HUGINN_OWNER:-}"
+FETCH=0; VIS=""
+for a in "$@"; do case "$a" in
+  --fetch|-f)       FETCH=1;;
+  --public|--pub)   VIS=public;;
+  --private|--priv) VIS=private;;
+  --help|-h)        sed -n '2,10p' "$0"; exit 0;;
+esac; done
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; C=$'\e[36m'; M=$'\e[35m'; DIM=$'\e[2m'; BD=$'\e[1m'; X=$'\e[0m'
@@ -20,6 +29,22 @@ rule(){ printf "${DIM}%s${X}\n" "$(printf '─%.0s' $(seq 1 "$1"))"; }
 
 mapfile -t DIRS < <(cd "$ROOT" && for d in */; do [ -d "${d}.git" ] && echo "${d%/}"; done | sort)
 [ "${#DIRS[@]}" -eq 0 ] && { echo "No git repos under $ROOT"; exit 0; }
+
+# visibility filter (--public / --private) — one gh call, then keep matching repos
+if [ -n "$VIS" ]; then
+  [ -z "$OWNER" ] && OWNER="$(gh api user --jq .login 2>/dev/null)"
+  declare -A VMAP=(); got=0
+  while IFS=$'\t' read -r n priv; do [ -n "$n" ] && { VMAP["$n"]="$priv"; got=1; }; done \
+    < <(gh repo list "$OWNER" --limit 1000 --json name,isPrivate --jq '.[]|"\(.name)\t\(.isPrivate)"' 2>/dev/null)
+  [ "$got" = 0 ] && { echo "Couldn't read repo visibility (network / gh auth?)."; exit 1; }
+  filtered=()
+  for d in "${DIRS[@]}"; do case "$VIS" in
+    public)  [ "${VMAP[$d]:-}" = false ] && filtered+=("$d");;
+    private) [ "${VMAP[$d]:-}" = true  ] && filtered+=("$d");;
+  esac; done
+  DIRS=("${filtered[@]}")
+  [ "${#DIRS[@]}" -eq 0 ] && { echo "No $VIS repos under $ROOT"; exit 0; }
+fi
 
 names=(); brs=(); brdef=(); lasts=(); stats=()
 maxN=4; maxB=6; maxL=4
@@ -61,7 +86,8 @@ for d in "${DIRS[@]}"; do
 done
 
 W=$((maxN + maxB + maxL + 22))
-printf "\n${BD}  git estate${X}  ${DIM}·  %s  ·  %s${X}\n\n" "$ROOT" "$(date '+%a %b %-d, %H:%M')"
+vtag=""; [ -n "$VIS" ] && vtag="  ·  ${VIS} only"
+printf "\n${BD}  git estate${X}  ${DIM}·  %s  ·  %s%s${X}\n\n" "$ROOT" "$(date '+%a %b %-d, %H:%M')" "$vtag"
 printf "  ${BD}%-${maxN}s  %-${maxB}s  %-${maxL}s  %s${X}\n" "REPO" "BRANCH" "LAST" "STATUS"
 printf "  "; rule "$W"
 for i in "${!names[@]}"; do

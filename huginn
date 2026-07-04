@@ -31,7 +31,11 @@ CONV_EXEMPT=""; _ej="$(first_of "$CONV/exemptions.json" "$HERE/templates/exempti
 [ -n "$_ej" ] && CONV_EXEMPT="$(jq -r '.exempt[].repo' "$_ej" 2>/dev/null | tr '\n' ' ')"
 
 # ── status ────────────────────────────────────────────────────────────────
-cmd_status(){ is_help "${1:-}" && { help_status; return 0; }; HUGINN_ROOT="$ROOT" HUGINN_EMAIL="$BIZ_EMAIL" exec "$HERE/repo-status.sh" "$@"; }
+cmd_status(){
+  is_help "${1:-}" && { help_status; return 0; }
+  case " $* " in *" --public "*|*" --private "*|*" --pub "*|*" --priv "*) need_owner || return 1;; esac  # visibility filter needs the owner
+  HUGINN_ROOT="$ROOT" HUGINN_EMAIL="$BIZ_EMAIL" HUGINN_OWNER="$OWNER" exec "$HERE/repo-status.sh" "$@"
+}
 
 # ── sync ──────────────────────────────────────────────────────────────────
 cmd_sync(){
@@ -370,7 +374,7 @@ help_init(){
 
 # ── per-command help ──────────────────────────────────────────────────────
 help_status(){
-  printf "\n  ${BD}huginn status${X} [--fetch]\n\n"
+  printf "\n  ${BD}huginn status${X} [--fetch] [--public | --private]\n\n"
   printf "  At-a-glance dashboard of every git repo in the estate. Fast & local by default.\n\n"
   printf "  ${BD}Columns${X}\n"
   printf "    REPO      repo (local folder) name\n"
@@ -380,7 +384,9 @@ help_status(){
   printf "              +N br (extra local branches) · ✉? no local email ·\n"
   printf "              ✉ <addr> (local email ≠ business address)\n\n"
   printf "  ${BD}Options${X}\n"
-  printf "    -f, --fetch   git fetch each repo first for fresh ahead/behind ${DIM}(network)${X}\n\n"
+  printf "    -f, --fetch   git fetch each repo first for fresh ahead/behind ${DIM}(network)${X}\n"
+  printf "    --public      only public repos  ${DIM}(network — reads visibility via gh)${X}\n"
+  printf "    --private     only private repos ${DIM}(network)${X}\n\n"
 }
 help_sync(){
   printf "\n  ${BD}huginn sync${X}\n\n"
@@ -479,6 +485,7 @@ cmd_help(){
   printf "    ${BD}init${X} [--force]         write a huginn config with detected defaults\n"
   printf "  ${DIM}inspect${X}\n"
   printf "    ${BD}status${X} [--fetch]       at-a-glance dashboard (branch · dirty · ahead/behind · flags)\n"
+  printf "    ${DIM}       [--public|--private]  filter the dashboard by repo visibility${X}\n"
   printf "    ${BD}prs${X}                    open PRs across the estate\n"
   printf "    ${BD}branches${X} [--prune]     stray local branches; prune merged ones\n"
   printf "    ${BD}doctor${X} [repo] [--fix]  audit repos vs your conventions; --fix the safe gaps\n"
