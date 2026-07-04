@@ -21,11 +21,14 @@ if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; C=$'\e[36m'; M=$'\e[35m'; DIM=$'\e[2m'; BD=$'\e[1m'; X=$'\e[0m'
 else R=; G=; Y=; C=; M=; DIM=; BD=; X=; fi
 
-is_family(){ case " $FAMILY " in *" $1 "*) return 0;; *) return 1;; esac; }
+is_exempt(){ case " $FAMILY $CONV_EXEMPT " in *" $1 "*) return 0;; *) return 1;; esac; }  # HUGINN_FAMILY env + conventions exemptions.json
 is_help(){ case "${1:-}" in help|-h|--help) return 0;; *) return 1;; esac; }
 repos(){ (cd "$ROOT" && for d in */; do [ -d "${d}.git" ] && echo "${d%/}"; done | sort); }
 need_owner(){ [ -n "$OWNER" ] && return 0; OWNER="$(gh api user --jq .login 2>/dev/null)"; [ -n "$OWNER" ] && return 0; printf "  ${R}no GitHub owner set.${X} Set HUGINN_OWNER, add it to %s, or run ${BD}huginn init${X}.\n" "$CONFIG" >&2; return 1; }
 first_of(){ local f; for f in "$@"; do [ -e "$f" ] && { printf '%s' "$f"; return 0; }; done; return 1; }  # your conventions repo, else bundled templates
+# exempt repos from the conventions data (merged with HUGINN_FAMILY by is_exempt)
+CONV_EXEMPT=""; _ej="$(first_of "$CONV/exemptions.json" "$HERE/templates/exemptions.json")"
+[ -n "$_ej" ] && CONV_EXEMPT="$(jq -r '.exempt[].repo' "$_ej" 2>/dev/null | tr '\n' ' ')"
 
 # ── status ────────────────────────────────────────────────────────────────
 cmd_status(){ is_help "${1:-}" && { help_status; return 0; }; HUGINN_ROOT="$ROOT" HUGINN_EMAIL="$BIZ_EMAIL" exec "$HERE/repo-status.sh" "$@"; }
@@ -36,7 +39,7 @@ cmd_sync(){
   local ok=0 skip=0 prob=0 def
   printf "\n  ${BD}huginn sync${X}  ${DIM}· pull each repo to its default branch${X}\n\n"
   while read -r d; do
-    if is_family "$d"; then printf "  ${DIM}∙ %s (external)${X}\n" "$d"; skip=$((skip+1)); continue; fi
+    if is_exempt "$d"; then printf "  ${DIM}∙ %s (external)${X}\n" "$d"; skip=$((skip+1)); continue; fi
     local GD="$ROOT/$d"
     if [ -n "$(git -C "$GD" status --porcelain 2>/dev/null)" ]; then printf "  ${Y}∙ %s (dirty — skipped)${X}\n" "$d"; skip=$((skip+1)); continue; fi
     def=$(git -C "$GD" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##'); def=${def:-main}
@@ -64,7 +67,7 @@ cmd_doctor(){
   [ -n "$dsj" ] && reqdocs="$(jq -r '.required[].file' "$dsj" 2>/dev/null)"
   while read -r d; do
     [ -n "$target" ] && [ "$d" != "$target" ] && continue
-    is_family "$d" && continue
+    is_exempt "$d" && continue
     local GD="$ROOT/$d"; local -a issues=()
 
     # baseline: business email
@@ -94,9 +97,11 @@ cmd_doctor(){
         fi
       fi
       [ -f "$GD/.agentgate.yml" ] || issues+=("${Y}no-.agentgate.yml${X}")
-      local vis="" ss=""
-      read -r vis ss < <(gh api "repos/$OWNER/$d" --jq '"\(.visibility) \(.security_and_analysis.secret_scanning.status // "na")"' 2>/dev/null || echo "? ?")
+      local vis="" ss="" defb=""
+      read -r vis ss defb < <(gh api "repos/$OWNER/$d" --jq '"\(.visibility) \(.security_and_analysis.secret_scanning.status // "na") \(.default_branch)"' 2>/dev/null || echo "? ? main")
       [ "$vis" = public ] && [ "$ss" != enabled ] && issues+=("${Y}secret-scan-off${X}")
+      # legacy classic branch protection — estate standard is rulesets, not classic protection
+      [ -n "$defb" ] && gh api "repos/$OWNER/$d/branches/$defb/protection" >/dev/null 2>&1 && issues+=("${Y}classic-protection${X}")
       if [ -n "$reqdocs" ]; then
         local miss="" df; for df in $reqdocs; do [ -f "$GD/$df" ] || miss="${miss},${df%.md}"; done
         [ -n "$miss" ] && issues+=("${Y}docs:${miss#,}${X}")
@@ -192,7 +197,7 @@ cmd_prs(){
     --json repository,number,title,author --jq '.[] | [.repository.name,(.number|tostring),.title,.author.login] | @tsv' 2>/dev/null)
   local n=0
   while IFS=$'\t' read -r repo num title author; do
-    [ -z "$repo" ] && continue; is_family "$repo" && continue
+    [ -z "$repo" ] && continue; is_exempt "$repo" && continue
     printf "  ${C}%-24s${X} ${BD}#%-4s${X} %s ${DIM}(@%s)${X}\n" "$repo" "$num" "$title" "$author"; n=$((n+1))
   done < <(printf '%s\n' "$rows")
   [ "$n" -eq 0 ] && printf "  ${G}✓ nothing open${X}\n"
@@ -310,7 +315,7 @@ cmd_branches(){
   printf "\n  ${BD}huginn branches${X}%s\n\n" "$([ "$PRUNE" = 1 ] && echo "  ${DIM}· deleting merged local branches${X}")"
   local total=0 pruned=0
   while read -r d; do
-    is_family "$d" && continue
+    is_exempt "$d" && continue
     local GD="$ROOT/$d" def cur extras mergedset
     def=$(git -C "$GD" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##'); def=${def:-main}
     cur=$(git -C "$GD" symbolic-ref --short HEAD 2>/dev/null)
@@ -381,8 +386,8 @@ help_sync(){
   printf "\n  ${BD}huginn sync${X}\n\n"
   printf "  Pull every repo to its default branch — fast-forward only.\n\n"
   printf "  For each: checkout the default branch, then ${BD}git pull --ff-only${X}.\n"
-  printf "  ${BD}Skips${X} repos with uncommitted changes (won't clobber work) and any\n"
-  printf "  repos in \$HUGINN_FAMILY. ${DIM}Never force-pulls or merges — a repo that can't fast-forward\n"
+  printf "  ${BD}Skips${X} repos with uncommitted changes (won't clobber work) and\n"
+  printf "  exempt repos (\$HUGINN_FAMILY + exemptions.json). ${DIM}Never force-pulls or merges — a repo that can't fast-forward\n"
   printf "  is reported, not touched. Summarizes updated / skipped / problems.${X}\n\n"
 }
 help_doctor(){
@@ -392,8 +397,9 @@ help_doctor(){
   printf "    Baseline (all):       local user.email = business address · ruleset present\n"
   printf "    Managed (AG-wired):   + agentgate required · signed commits required ·\n"
   printf "                          .agentgate.yml present · secret scanning on (public) ·\n"
-  printf "                          required doc suite present (README/LICENSE/CHANGELOG/ROADMAP/CONTRIBUTING)\n"
-  printf "    ${DIM}Dormant/unwired repos get the baseline only; \$HUGINN_FAMILY excluded.${X}\n\n"
+  printf "                          required doc suite present (README/LICENSE/CHANGELOG/ROADMAP/CONTRIBUTING) ·\n"
+  printf "                          no leftover classic branch protection (estate standard is rulesets)\n"
+  printf "    ${DIM}Dormant/unwired repos get the baseline only; exempt repos are skipped.${X}\n\n"
   printf "  ${BD}Arguments${X}\n"
   printf "    repo            audit a single repo (fast) instead of the whole estate\n\n"
   printf "  ${BD}Options${X}\n"
@@ -433,7 +439,7 @@ help_conventions(){
 help_prs(){
   printf "\n  ${BD}huginn prs${X}\n\n"
   printf "  List every open pull request across the estate — one line each (repo, #, title,\n"
-  printf "  author). Excludes repos in \$HUGINN_FAMILY. Handy for \"what's in flight / needs a\n"
+  printf "  author). Excludes exempt repos (\$HUGINN_FAMILY + exemptions.json). Handy for \"what's in flight / needs a\n"
   printf "  merge?\" after agents have been working. ${DIM}(network — one search query)${X}\n\n"
 }
 help_new(){
@@ -459,7 +465,7 @@ help_open(){
 help_branches(){
   printf "\n  ${BD}huginn branches${X} [--prune]\n\n"
   printf "  List every repo that has local branches beyond its default, marking each\n"
-  printf "  ${G}(merged)${X} or ${Y}(unmerged)${X}. Excludes repos in \$HUGINN_FAMILY.\n\n"
+  printf "  ${G}(merged)${X} or ${Y}(unmerged)${X}. Excludes exempt repos (\$HUGINN_FAMILY + exemptions.json).\n\n"
   printf "  ${BD}Options${X}\n"
   printf "    --prune   delete the branches already merged into the default ${DIM}(safe: git branch -d,\n"
   printf "              never the current branch, never unmerged work)${X}\n\n"

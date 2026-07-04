@@ -7,6 +7,12 @@ All notable changes to huginn are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- **Configurable exemptions** — repos that aren't code projects (profile repo, personal/creative
+  repos, repos managed elsewhere) are read from `repo-conventions/exemptions.json` and merged with the
+  `HUGINN_FAMILY` env var; exempt repos are skipped in `doctor`/`sync`/`prs`/`branches`. (Renamed the
+  internal `is_family` helper to `is_exempt`.)
+- **Classic-protection check** — `doctor` flags any managed repo that still has legacy *classic* branch
+  protection (`classic-protection`), which conflicts with the ruleset-based standard.
 - **Document-suite convention** — `doctor` now verifies each managed repo carries the required docs
   (README · LICENSE · CHANGELOG · ROADMAP · CONTRIBUTING), flagging any missing as `docs:<name>`;
   `new` scaffolds CHANGELOG + ROADMAP alongside the existing README/LICENSE/CONTRIBUTING; and
