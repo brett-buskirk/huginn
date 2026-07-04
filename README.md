@@ -6,6 +6,10 @@ Named for Odin's raven that flies the realms and reports back what it sees.
 `huginn` gives you an at-a-glance dashboard of every repo, audits them against a shared convention,
 scaffolds new repos to that standard, and handles the routine chores (sync, labels, open PRs).
 
+<p align="center">
+  <img src="docs/huginn-status.png" alt="huginn status — the estate dashboard, showing each repo's branch, last commit, and state at a glance" width="820">
+</p>
+
 > **Note:** built for my own workflow, but **config-driven and self-contained** — `huginn init`
 > detects sensible defaults (your `gh` login, git identity, `~/github-repos`), and it ships default
 > guardrail templates (`templates/`) so it works out of the box. Point `HUGINN_CONVENTIONS` at your
