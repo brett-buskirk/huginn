@@ -5,10 +5,10 @@
 # no real repo names leak) into a clean terminal-window PNG.
 #
 # Dev-only. Needs huginn on PATH, plus:  pip3 install --user rich cairosvg
-# Usage:  docs/screenshot.sh
+# Usage:  scripts/screenshot.sh
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-OUT="$HERE/huginn-status.png"
+OUT="$(cd "$HERE/.." && pwd)/docs/huginn-status.png"
 EMAIL="dev@acme.example"
 DEMO="$(mktemp -d)"; trap 'rm -rf "$DEMO"' EXIT
 mkdir -p "$DEMO/.remotes"
